@@ -1,0 +1,25 @@
+[project]
+name = "pixel-art-scaler"
+version = "0.1.0"
+description = "A tool to clean up pixel art by removing scaling artifacts and re-upscaling with nearest neighbor"
+authors = [
+    {name = "You"}
+]
+requires-python = ">=3.9, <3.13"
+dependencies = [
+    "pillow>=9.0.0",
+    "numpy<2.0.0",  # Downgraded to avoid NumPy 2.0 compatibility issues
+    "pyside6>=6.4.0",
+    "scipy<2.0.0",  # Downgraded to avoid NumPy 2.0 compatibility issues
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+pixel-art-scaler = "gui:main"
+pixel-art-scaler-cli = "cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just quickstart:*)",
+      "Bash(source:*)",
+      "Bash(python:*)",
+      "Bash(uv run:*)"
+    ],
+    "deny": []
+  }
+}
