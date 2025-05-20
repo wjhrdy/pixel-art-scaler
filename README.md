@@ -4,7 +4,7 @@ A Python application that restores the crispness of pixel art images that have b
 
 ## Features
 
-- Detects and corrects grid alignment offset from image edges
+- Corrects grid alignment offset
 - Downscales to true 1:1 pixel ratio to rescale
 - Re-upscales using nearest neighbor for perfect pixel edges
 - Creates both clean 1:1 version and upscaled versions
@@ -28,12 +28,11 @@ A Python application that restores the crispness of pixel art images that have b
    ```
    Follow the on-screen instructions to add `uv` to your PATH.
 
-2. Clone the repository and install dependencies:
+2. Run the GUI application:
    ```bash
-   git clone https://github.com/wjhrdy/pixel-art-scaler.git
-   cd pixel-art-scaler
-   uv pip install -e .
+   uvx --from git+https://github.com/wjhrdy/pixel-art-scaler pixel-art-scaler
    ```
+
 ## Why Use Pixel Art Scaler
 
 When pixel art is shared on social media platforms, the original crisp pixel edges are often lost due to:
