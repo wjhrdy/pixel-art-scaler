@@ -16,6 +16,21 @@ A Python application that restores the crispness of pixel art images that have b
 
 ## Installation
 
+### Quick Start
+
+1. Install `uv` (if you don't have it):
+   ```bash
+   curl -sSf https://astral.sh/uv/install.sh | sh
+   ```
+   Follow the on-screen instructions to add `uv` to your PATH.
+
+2. Install and run the GUI application:
+   ```bash
+   uvx --from git+https://github.com/wjhrdy/pixel-art-scaler pixel-art-scaler
+   ```
+
+### Manual Installation
+
 1. Clone this repository
 2. Install dependencies using `uv` (recommended) or `pip`
 
@@ -30,16 +45,6 @@ A Python application that restores the crispness of pixel art images that have b
    # For CLI version
    ./run-cli.sh --help
    ```
-
-### Using `just`
-
-```bash
-# Install just if you don't have it (macOS)
-brew install just
-
-# Setup environment and install dependencies
-just quickstart
-```
 
 ## Usage
 
