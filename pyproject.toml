@@ -3,7 +3,7 @@ name = "pixel-art-scaler"
 version = "0.1.0"
 description = "A tool to clean up pixel art by removing scaling artifacts and re-upscaling with nearest neighbor"
 authors = [
-    {name = "You"}
+    {name = "Willy"}
 ]
 requires-python = ">=3.9, <3.13"
 dependencies = [
