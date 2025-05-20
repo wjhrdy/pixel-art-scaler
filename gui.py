@@ -80,13 +80,9 @@ class ImageViewer(QLabel):
         if not self.pixmap:
             return
         
-        # Cap zoom to prevent rendering issues
-        MAX_ZOOM = 10  # Maximum zoom factor for better performance
-        if self.zoom_factor > MAX_ZOOM:
-            self.zoom_factor = MAX_ZOOM
-            
-        # Ensure we have consistent zoom values as integers
-        self.zoom_factor = int(self.zoom_factor)
+        # Allow any positive zoom factor, including fractional values
+        # Make sure it's not too small to see anything
+        self.zoom_factor = max(0.1, self.zoom_factor)
             
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)  # No antialiasing for pixel art
@@ -100,6 +96,10 @@ class ImageViewer(QLabel):
             # Calculate scaled dimensions - explicitly convert to integers
             scaled_width = int(pixmap_width * self.zoom_factor)
             scaled_height = int(pixmap_height * self.zoom_factor)
+            
+            # Ensure we have at least 1 pixel width/height
+            scaled_width = max(1, scaled_width)
+            scaled_height = max(1, scaled_height)
             
             # Calculate image position, center the image by default, then apply pan offset
             # Use integer division to ensure pixel-perfect positioning
@@ -120,38 +120,7 @@ class ImageViewer(QLabel):
             # Draw the cached pixmap at the calculated position
             painter.drawPixmap(x_offset, y_offset, self.cached_pixmap)
             
-            # Only draw grid when zoom factor is sufficient but not too large
-            # Skip grid at high zoom to improve performance
-            if 4 <= self.zoom_factor <= 8:
-                # Use a semi-transparent grid color
-                painter.setPen(QPen(QColor(200, 200, 200, 100), 1))
-                
-                # For improved performance, only draw visible grid lines
-                # Determine visible area of the image
-                visible_start_x = max(0, int((-x_offset) / self.zoom_factor))
-                visible_end_x = min(self.pixmap.width(), 
-                                   int((-x_offset + self.width()) / self.zoom_factor) + 1)
-                
-                visible_start_y = max(0, int((-y_offset) / self.zoom_factor))
-                visible_end_y = min(self.pixmap.height(), 
-                                   int((-y_offset + self.height()) / self.zoom_factor) + 1)
-                
-                # Draw only visible grid lines
-                for x in range(visible_start_x, visible_end_x + 1):
-                    grid_x = int(x_offset + x * self.zoom_factor)
-                    if 0 <= grid_x <= self.width():
-                        painter.drawLine(
-                            grid_x, max(0, y_offset),
-                            grid_x, min(self.height(), y_offset + scaled_height)
-                        )
-                
-                for y in range(visible_start_y, visible_end_y + 1):
-                    grid_y = int(y_offset + y * self.zoom_factor)
-                    if 0 <= grid_y <= self.height():
-                        painter.drawLine(
-                            max(0, x_offset), grid_y,
-                            min(self.width(), x_offset + scaled_width), grid_y
-                        )
+            # Grid overlay has been removed to improve performance
         except Exception as e:
             # Fallback in case of rendering error
             print(f"Error during painting: {str(e)}")
@@ -160,26 +129,62 @@ class ImageViewer(QLabel):
             painter.drawText(self.rect(), Qt.AlignCenter, f"Error rendering image: {str(e)}")
     
     def wheelEvent(self, event):
-        # Zoom in/out with mouse wheel
+        # Zoom in/out with mouse wheel centered on cursor position
         delta = event.angleDelta().y()
         old_zoom = self.zoom_factor
         
-        # Calculate new zoom factor
-        if delta > 0:
-            # Zoom in (with bounds check) - limit to practical maximum
-            self.zoom_factor = min(10, self.zoom_factor + 1)
-        elif delta < 0:
-            # Zoom out (with bounds check)
-            self.zoom_factor = max(1, self.zoom_factor - 1)
+        # Get mouse position
+        mouse_pos = event.position()
+        
+        # Calculate image coordinates before zoom
+        if self.pixmap:
+            # Calculate image position and dimensions at current zoom
+            pixmap_width = self.pixmap.width()
+            pixmap_height = self.pixmap.height()
+            scaled_width = pixmap_width * old_zoom
+            scaled_height = pixmap_height * old_zoom
+            x_offset = (self.width() - scaled_width) / 2 + self.pan_offset_x
+            y_offset = (self.height() - scaled_height) / 2 + self.pan_offset_y
             
-        # Only update if the zoom actually changed
-        if old_zoom != self.zoom_factor:
-            # Update this view
-            self.update()
+            # Calculate cursor position relative to image (in image coordinates)
+            image_x = (mouse_pos.x() - x_offset) / old_zoom
+            image_y = (mouse_pos.y() - y_offset) / old_zoom
             
-            # Sync zoom across viewers if in a main window
-            if hasattr(self.main_window, 'syncZoom'):
-                self.main_window.syncZoom(self.zoom_factor, source_viewer=self)
+            # Calculate new zoom factor
+            if delta > 0:
+                # Zoom in with smoother scaling
+                self.zoom_factor = self.zoom_factor * 1.25  # Smoother zooming
+            elif delta < 0:
+                # Zoom out with smoother scaling
+                self.zoom_factor = self.zoom_factor / 1.25  # Smoother zooming
+            
+            # Only update if the zoom actually changed
+            if old_zoom != self.zoom_factor:
+                # Calculate new scaled dimensions and offsets
+                new_scaled_width = pixmap_width * self.zoom_factor
+                new_scaled_height = pixmap_height * self.zoom_factor
+                
+                # Calculate new pan offsets to maintain cursor position over same image point
+                new_x_offset = mouse_pos.x() - (image_x * self.zoom_factor)
+                new_y_offset = mouse_pos.y() - (image_y * self.zoom_factor)
+                
+                # Calculate the adjustment needed from the center offset
+                center_x_offset = (self.width() - new_scaled_width) / 2
+                center_y_offset = (self.height() - new_scaled_height) / 2
+                
+                # Update pan offsets
+                self.pan_offset_x = new_x_offset - center_x_offset
+                self.pan_offset_y = new_y_offset - center_y_offset
+                
+                # Update this view
+                self.update()
+                
+                # Sync zoom and pan across viewers if in a main window
+                if hasattr(self.main_window, 'syncZoom'):
+                    self.main_window.syncZoom(self.zoom_factor, source_viewer=self)
+                    
+                if hasattr(self.main_window, 'syncPan'):
+                    self.main_window.syncPan(self.pan_offset_x, self.pan_offset_y, source_viewer=self)
     
     def keyPressEvent(self, event):
         # Track spacebar state for panning
@@ -290,12 +295,17 @@ class DropArea(ImageViewer):
             y_offset = int(max(-10000, min(10000, (self.height() - scaled_height) // 2 + self.pan_offset_y)))
             
             # Calculate screen coordinates for selection rectangle
-            screen_rect = QRect(
-                x_offset + self.selection_rect.x() * self.zoom_factor,
-                y_offset + self.selection_rect.y() * self.zoom_factor,
-                self.selection_rect.width() * self.zoom_factor,
-                self.selection_rect.height() * self.zoom_factor
-            )
+            # Ensure pixel-perfect alignment by rounding to integers
+            rect_x = round(x_offset + self.selection_rect.x() * self.zoom_factor)
+            rect_y = round(y_offset + self.selection_rect.y() * self.zoom_factor)
+            rect_width = round(self.selection_rect.width() * self.zoom_factor)
+            rect_height = round(self.selection_rect.height() * self.zoom_factor)
+            
+            # Make sure the width and height are at least 1 pixel
+            rect_width = max(1, rect_width)
+            rect_height = max(1, rect_height)
+            
+            screen_rect = QRect(rect_x, rect_y, rect_width, rect_height)
             
             # Draw with highlight color
             painter.setPen(QPen(QColor(255, 0, 0), 2))
@@ -327,8 +337,9 @@ class DropArea(ImageViewer):
             y_offset = int(max(-10000, min(10000, (self.height() - scaled_height) // 2 + self.pan_offset_y)))
             
             # Convert screen coordinates to image coordinates
-            image_x = int((event.position().x() - x_offset) // self.zoom_factor)
-            image_y = int((event.position().y() - y_offset) // self.zoom_factor)
+            # Ensure coordinates snap to pixel grid by using integer division, regardless of zoom factor
+            image_x = int((event.position().x() - x_offset) / self.zoom_factor)
+            image_y = int((event.position().y() - y_offset) / self.zoom_factor)
             
             # Check if click is within image bounds
             if (0 <= image_x < self.pixmap.width() and 
@@ -355,15 +366,59 @@ class DropArea(ImageViewer):
             y_offset = int(max(-10000, min(10000, (self.height() - scaled_height) // 2 + self.pan_offset_y)))
             
             # Convert screen coordinates to image coordinates
-            image_x = max(0, min(self.pixmap.width() - 1, int((event.position().x() - x_offset) // self.zoom_factor)))
-            image_y = max(0, min(self.pixmap.height() - 1, int((event.position().y() - y_offset) // self.zoom_factor)))
+            # Ensure coordinates snap to pixel grid with integer division, regardless of zoom factor
+            image_x = max(0, min(self.pixmap.width() - 1, int((event.position().x() - x_offset) / self.zoom_factor)))
+            image_y = max(0, min(self.pixmap.height() - 1, int((event.position().y() - y_offset) / self.zoom_factor)))
             
-            # Update selection rectangle
+            # Calculate width and height of selection
+            width = abs(image_x - self.selection_start.x()) + 1
+            height = abs(image_y - self.selection_start.y()) + 1
+            
+            # Force square selection by using the larger dimension
+            square_size = max(width, height)
+            
+            # Determine which direction we're dragging
+            drag_right = image_x >= self.selection_start.x()
+            drag_down = image_y >= self.selection_start.y()
+            
+            # Calculate new coordinates to ensure a square
+            if drag_right:
+                end_x = self.selection_start.x() + square_size - 1
+            else:
+                end_x = self.selection_start.x() - square_size + 1
+                
+            if drag_down:
+                end_y = self.selection_start.y() + square_size - 1
+            else:
+                end_y = self.selection_start.y() - square_size + 1
+            
+            # Ensure coordinates are within image bounds
+            end_x = max(0, min(self.pixmap.width() - 1, end_x))
+            end_y = max(0, min(self.pixmap.height() - 1, end_y))
+            
+            # Recalculate square size if we hit boundaries
+            if drag_right:
+                new_square_size = end_x - self.selection_start.x() + 1
+                if drag_down:
+                    end_y = self.selection_start.y() + new_square_size - 1
+                else:
+                    end_y = self.selection_start.y() - new_square_size + 1
+            else:
+                new_square_size = self.selection_start.x() - end_x + 1
+                if drag_down:
+                    end_y = self.selection_start.y() + new_square_size - 1
+                else:
+                    end_y = self.selection_start.y() - new_square_size + 1
+                    
+            # Ensure y is within bounds
+            end_y = max(0, min(self.pixmap.height() - 1, end_y))
+            
+            # Create the square selection rectangle
             self.selection_rect = QRect(
-                min(self.selection_start.x(), image_x),
-                min(self.selection_start.y(), image_y),
-                abs(image_x - self.selection_start.x()) + 1,
-                abs(image_y - self.selection_start.y()) + 1
+                min(self.selection_start.x(), end_x),
+                min(self.selection_start.y(), end_y),
+                abs(end_x - self.selection_start.x()) + 1,
+                abs(end_y - self.selection_start.y()) + 1
             )
             
             self.update()
@@ -532,15 +587,56 @@ class PixelArtDownscalerApp(QMainWindow):
         manual_note.setWordWrap(True)
         manual_layout.addWidget(manual_note)
         
-        # Scale input
+        # Fractional scaling inputs
+        # Note: QLabel is already imported at the top, so we only need QDoubleSpinBox and QFrame
+        from PySide6.QtWidgets import QDoubleSpinBox, QFrame
+        
+        # Selection size and number of pixels selection
+        selection_layout = QHBoxLayout()
+        
+        # Selection size (width/height of selection in pixels)
+        selection_layout.addWidget(QLabel("Selection Size:"))
+        self.selection_size_input = QSpinBox()
+        self.selection_size_input.setRange(1, 1000)
+        self.selection_size_input.setValue(1)  # Default to 1 until detection
+        self.selection_size_input.valueChanged.connect(self.updateFractionalScale)
+        selection_layout.addWidget(self.selection_size_input)
+        selection_layout.addWidget(QLabel("pixels"))
+        
+        # Number of pixels in selection (for fractional scaling)
+        selection_layout.addWidget(QLabel("Contains:"))
+        self.num_pixels_input = QSpinBox()
+        self.num_pixels_input.setRange(1, 100)
+        self.num_pixels_input.setValue(1)  # Default to 1 (meaning exactly 1 pixel)
+        self.num_pixels_input.valueChanged.connect(self.updateFractionalScale)
+        selection_layout.addWidget(self.num_pixels_input)
+        selection_layout.addWidget(QLabel("pixels"))
+        
+        manual_layout.addLayout(selection_layout)
+        
+        # Scale display (calculated from selection size and number of pixels)
         scale_layout = QHBoxLayout()
-        scale_layout.addWidget(QLabel("Pixel Size:"))
-        self.scale_input = QSpinBox()
-        self.scale_input.setRange(1, 32)
-        self.scale_input.setValue(1)  # Default to 1 until detection
-        # Removed automatic preview update
-        scale_layout.addWidget(self.scale_input)
+        scale_layout.addWidget(QLabel("Calculated Scale:"))
+        
+        # Use QLabel instead of QSpinBox for displaying calculated scale
+        self.scale_display = QLabel("1.00")
+        self.scale_display.setStyleSheet("font-weight: bold; color: #2980b9;")
+        self.scale_display.setMinimumWidth(60)
+        scale_layout.addWidget(self.scale_display)
+        
+        # Add explanation label
+        scale_explanation = QLabel("(Selection Size ÷ Num Pixels)")
+        scale_explanation.setStyleSheet("font-style: italic; color: #666;")
+        scale_layout.addWidget(scale_explanation)
+        scale_layout.addStretch(1)
+        
         manual_layout.addLayout(scale_layout)
+        
+        # Add a separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        manual_layout.addWidget(separator)
         
         # Offset inputs
         offset_layout = QHBoxLayout()
@@ -584,6 +680,11 @@ class PixelArtDownscalerApp(QMainWindow):
         self.use_median_check = QCheckBox("Use median color (better for JPG compression)")
         self.use_median_check.setChecked(True)  # Enable by default for better performance and stability
         color_layout.addWidget(self.use_median_check)
+        
+        # Ignore outer pixels option
+        self.ignore_outer_check = QCheckBox("Ignore outer pixels when determining color (reduces edge artifacts)")
+        self.ignore_outer_check.setChecked(True)  # Enable by default for better results
+        color_layout.addWidget(self.ignore_outer_check)
         
         # Update preview button
         update_preview_button = QPushButton("Update Preview")
@@ -659,14 +760,14 @@ class PixelArtDownscalerApp(QMainWindow):
     
     def syncZoom(self, zoom_factor, source_viewer=None):
         """Synchronize zoom across all image viewers"""
-        # Ensure zoom_factor is within valid range
-        zoom_factor = min(10, max(1, zoom_factor))
+        # Allow any positive zoom factor, including fractional values
+        # (no longer constrained to 1-10)
+        zoom_factor = max(0.1, zoom_factor)
         
-        # Update zoom label
-        self.zoom_label.setText(f"Zoom: {zoom_factor}x")
-        
-        # Get scale factor (with safety check)
-        scale_to_use = max(1, self.scale_input.value())
+        # Calculate the scale based on selection size and number of pixels
+        selection_size = self.selection_size_input.value() if hasattr(self, 'selection_size_input') else 1
+        num_pixels = self.num_pixels_input.value() if hasattr(self, 'num_pixels_input') else 1
+        scale_to_use = selection_size / max(1, num_pixels)
         
         # Add flag to prevent recursive updates
         if hasattr(self, '_syncing_zoom') and self._syncing_zoom:
@@ -675,23 +776,40 @@ class PixelArtDownscalerApp(QMainWindow):
         self._syncing_zoom = True
         
         try:
-            # Update appropriate zoom levels based on source
-            if source_viewer == self.preview_viewer and scale_to_use > 1:
-                # If zooming from preview, update original
+            # Log debug info
+            print(f"DEBUG: syncZoom called with zoom_factor={zoom_factor}, source_viewer={source_viewer}, scale_to_use={scale_to_use:.2f}")
+            
+            # Update zoom factors accounting for scaling between images
+            if source_viewer == self.preview_viewer:
+                # If zoom came from preview viewer, update drop area zoom accordingly
                 if hasattr(self, 'drop_area'):
-                    # Careful with integer division - use float division then convert to int
-                    self.drop_area.zoom_factor = max(1, min(10, int(zoom_factor / scale_to_use)))
+                    # Calculate appropriate zoom for the input image
+                    # We need to account for the fact that if the scale is N, each preview pixel
+                    # represents N input pixels, so the input zoom should be the preview zoom divided by N
+                    orig_zoom = max(0.1, zoom_factor / scale_to_use)
+                    self.drop_area.zoom_factor = orig_zoom
                     self.drop_area.update()
+                    # Update zoom label to show the input image zoom level
+                    self.zoom_label.setText(f"Zoom: {orig_zoom:.2f}x")
+                    print(f"DEBUG: Updated drop_area zoom to {orig_zoom} based on preview zoom {zoom_factor}")
             else:
-                # If zooming from original, update both
+                # If zoom came from drop area or elsewhere, update the drop area first
                 if hasattr(self, 'drop_area'):
                     self.drop_area.zoom_factor = zoom_factor
                     self.drop_area.update()
-                    
-                # Update preview with scaled zoom
-                if hasattr(self, 'preview_viewer') and scale_to_use > 1:
-                    self.preview_viewer.zoom_factor = min(10, max(1, int(zoom_factor * scale_to_use)))
+                    # Update zoom label to show the input image zoom level
+                    self.zoom_label.setText(f"Zoom: {zoom_factor:.2f}x")
+                    print(f"DEBUG: Set drop_area zoom to {zoom_factor}")
+                
+                # Then scale the preview zoom to match visual size
+                if hasattr(self, 'preview_viewer'):
+                    # Calculate appropriate zoom for the preview image
+                    # If the scale is N, each preview pixel represents N input pixels
+                    # so we need N times more zoom to maintain the same visual size
+                    preview_zoom = max(0.1, zoom_factor * scale_to_use)
+                    self.preview_viewer.zoom_factor = preview_zoom
                     self.preview_viewer.update()
+                    print(f"DEBUG: Set preview_viewer zoom to {preview_zoom} based on input zoom {zoom_factor} and scale {scale_to_use:.2f}")
         finally:
             # Always clear the flag
             self._syncing_zoom = False
@@ -708,20 +826,41 @@ class PixelArtDownscalerApp(QMainWindow):
         pan_x = max(-10000, min(10000, pan_x))
         pan_y = max(-10000, min(10000, pan_y))
         
-        # Get the current scale factor
-        scale_to_use = self.scale_input.value()
-        
-        # Apply to both viewers, maintaining their visual alignment
-        if hasattr(self, 'drop_area'):
-            self.drop_area.pan_offset_x = pan_x
-            self.drop_area.pan_offset_y = pan_y
-            self.drop_area.update()
+        # Add flag to prevent recursive updates
+        if hasattr(self, '_syncing_pan') and self._syncing_pan:
+            return
             
-        # Apply same pan to preview viewer (no scaling needed)
-        if hasattr(self, 'preview_viewer'):
-            self.preview_viewer.pan_offset_x = pan_x
-            self.preview_viewer.pan_offset_y = pan_y
-            self.preview_viewer.update()
+        self._syncing_pan = True
+        
+        try:
+            # Simply apply the exact same pan offset to both viewers
+            # This approach ensures they move together at the same rate
+            if source_viewer == self.drop_area:
+                # Panning originated from input image
+                if hasattr(self, 'preview_viewer'):
+                    self.preview_viewer.pan_offset_x = pan_x
+                    self.preview_viewer.pan_offset_y = pan_y
+                    self.preview_viewer.update()
+            elif source_viewer == self.preview_viewer:
+                # Panning originated from preview image
+                if hasattr(self, 'drop_area'):
+                    self.drop_area.pan_offset_x = pan_x
+                    self.drop_area.pan_offset_y = pan_y
+                    self.drop_area.update()
+            else:
+                # Panning from somewhere else or initial setup
+                if hasattr(self, 'drop_area'):
+                    self.drop_area.pan_offset_x = pan_x
+                    self.drop_area.pan_offset_y = pan_y
+                    self.drop_area.update()
+                
+                if hasattr(self, 'preview_viewer'):
+                    self.preview_viewer.pan_offset_x = pan_x
+                    self.preview_viewer.pan_offset_y = pan_y
+                    self.preview_viewer.update()
+        finally:
+            # Always clear the flag
+            self._syncing_pan = False
     
     def zoom_in(self):
         if self.drop_area.zoom_factor < 10:  # Cap at 10x for better performance
@@ -732,6 +871,34 @@ class PixelArtDownscalerApp(QMainWindow):
         if self.drop_area.zoom_factor > 1:
             self.drop_area.zoom_factor -= 1
             self.syncZoom(self.drop_area.zoom_factor)
+    
+    def updateFractionalScale(self):
+        """Calculate and update the fractional scale based on user inputs"""
+        selection_size = self.selection_size_input.value()
+        num_pixels = self.num_pixels_input.value()
+        
+        if num_pixels > 0:
+            # Calculate the scale (selection size / number of pixels)
+            scale = selection_size / num_pixels
+            # Update the scale display
+            self.scale_display.setText(f"{scale:.2f}")
+            
+            # Update the pixel info label to show the fractional scale
+            if hasattr(self, 'pixel_info_label'):
+                offset_x = self.offset_x_input.value()
+                offset_y = self.offset_y_input.value()
+                
+                if num_pixels > 1:
+                    self.pixel_info_label.setText(
+                        f"Selected area: {selection_size}x{selection_size} pixels\n"
+                        f"Contains {num_pixels} pixels (scale: {scale:.2f})\n"
+                        f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                    )
+                else:
+                    self.pixel_info_label.setText(
+                        f"Selected pixel size: {selection_size}x{selection_size} pixels\n"
+                        f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                    )
     
     def onColorThresholdChanged(self, value):
         # Update the value label
@@ -756,8 +923,8 @@ class PixelArtDownscalerApp(QMainWindow):
         return max(1, min(32, round(fitting_zoom)))
     
     def updatePreview(self):
-        # Only update if we have an image and pixel size is set
-        if not self.current_image_path or self.scale_input.value() <= 1:
+        # Only update if we have an image and selection size is set
+        if not self.current_image_path or self.selection_size_input.value() <= 0:
             return
         
         # Show loading state
@@ -766,11 +933,18 @@ class PixelArtDownscalerApp(QMainWindow):
             
         try:
             # Get the current settings
-            scale_to_use = self.scale_input.value()
+            selection_size = self.selection_size_input.value()
+            num_pixels = self.num_pixels_input.value()
+            
+            # Calculate the scale (selection size / number of pixels)
+            # If num_pixels is 0, treat selection as 1 pixel (1:1 mapping)
+            scale_to_use = selection_size / max(1, num_pixels)
+            
             offset_x = self.offset_x_input.value()
             offset_y = self.offset_y_input.value()
             color_threshold = self.color_threshold_slider.value()
             use_median = self.use_median_check.isChecked()
+            ignore_outer_pixels = self.ignore_outer_check.isChecked()
             
             # Load the image
             img = Image.open(self.current_image_path)
@@ -780,10 +954,11 @@ class PixelArtDownscalerApp(QMainWindow):
             if offset_x > 0 or offset_y > 0:
                 img = img.crop((offset_x, offset_y, width, height))
             
-            print(f"DEBUG: Creating preview with scale={scale_to_use}, color_threshold={color_threshold}, use_median={use_median}")
+            print(f"DEBUG: Creating preview with scale={scale_to_use:.2f}, color_threshold={color_threshold}, " +
+                  f"use_median={use_median}, ignore_outer_pixels={ignore_outer_pixels}")
             
             # Safety check for small images
-            if width // scale_to_use < 1 or height // scale_to_use < 1:
+            if int(width / scale_to_use) < 1 or int(height / scale_to_use) < 1:
                 self.preview_viewer.setText("Image too small for selected scale")
                 return
             
@@ -801,30 +976,40 @@ class PixelArtDownscalerApp(QMainWindow):
                     img, 
                     scale_to_use, 
                     color_threshold=color_threshold, 
-                    use_median=use_median
+                    use_median=use_median,
+                    ignore_outer_pixels=ignore_outer_pixels
                 )
                 
                 # Update the status
-                self.status_bar.showMessage(f"Preview created at {preview_img.width}x{preview_img.height} pixels")
+                self.status_bar.showMessage(f"Preview created at {preview_img.width}x{preview_img.height} pixels " +
+                                           f"(scale: {scale_to_use:.2f})")
                 
                 # Display the preview in the viewer
                 self.preview_viewer.setImage(preview_img)
                 
-                # Set the preview zoom factor to match the visual size of pixels
-                # For a scale of N, we need an Nx zoom to match pixel sizes
-                # This is because each pixel in the preview represents N pixels in the original
+                # Scale the preview zoom to match visual size
                 orig_zoom = self.drop_area.zoom_factor
+                calculated_scale = scale_to_use  # Using the scale we calculated above
                 
-                # Apply scaled zoom to preview viewer to compensate for downscaling
-                self.preview_viewer.zoom_factor = min(10, max(1, int(orig_zoom * scale_to_use)))
+                # For the preview, we want to apply the same relative zoom
+                # If scale_to_use is N, each pixel in the preview represents N pixels in the original
+                # So we need N times more zoom to maintain the same visual size
+                preview_zoom = orig_zoom * calculated_scale
                 
-                # Maintain the existing pan position for the original
-                orig_pan_x = self.drop_area.pan_offset_x
-                orig_pan_y = self.drop_area.pan_offset_y
+                # Ensure the zoom is at least 0.1
+                preview_zoom = max(0.1, preview_zoom)
+                self.preview_viewer.zoom_factor = preview_zoom
                 
-                # Scale the pan for the preview
-                self.preview_viewer.pan_offset_x = int(orig_pan_x / scale_to_use)
-                self.preview_viewer.pan_offset_y = int(orig_pan_y / scale_to_use)
+                # Update the UI to reflect the current zoom level of the input image
+                self.zoom_label.setText(f"Zoom: {orig_zoom:.2f}x")
+                
+                # Apply the pan offsets to maintain the same visual position
+                self.preview_viewer.pan_offset_x = self.drop_area.pan_offset_x
+                self.preview_viewer.pan_offset_y = self.drop_area.pan_offset_y
+                
+                # Print debug info
+                print(f"DEBUG: Original zoom: {orig_zoom}, Preview zoom: {preview_zoom}, Scale: {calculated_scale:.2f}")
+                print(f"DEBUG: Pan offsets - Original: ({self.drop_area.pan_offset_x}, {self.drop_area.pan_offset_y}), Preview: ({self.preview_viewer.pan_offset_x}, {self.preview_viewer.pan_offset_y})")
                 
                 # Update both views
                 self.drop_area.update()
@@ -842,15 +1027,34 @@ class PixelArtDownscalerApp(QMainWindow):
     
     def onPixelSelected(self, pixel_size, offset_x, offset_y):
         # Update UI with selected pixel information
-        self.scale_input.setValue(pixel_size)
+        # For fractional scaling, we now use the pixel size as the selection size by default
+        # with the assumption that it represents 1 pixel. This can be adjusted by the user.
+        self.selection_size_input.setValue(pixel_size)
         self.offset_x_input.setValue(offset_x)
         self.offset_y_input.setValue(offset_y)
         
+        # Calculate the actual scale to use based on the selection size and number of pixels
+        num_pixels = self.num_pixels_input.value()
+        if num_pixels > 0:
+            calculated_scale = pixel_size / num_pixels
+            # Update the scale display (read-only, calculated)
+            self.scale_display.setText(f"{calculated_scale:.2f}")
+        else:
+            # If num_pixels is 0, default to treating selection as 1 pixel
+            self.scale_display.setText(f"{pixel_size:.2f}")
+        
         # Update info label
-        self.pixel_info_label.setText(
-            f"Selected pixel size: {pixel_size}x{pixel_size} pixels\n"
-            f"Grid offset: ({offset_x}, {offset_y}) pixels"
-        )
+        if num_pixels > 1:
+            self.pixel_info_label.setText(
+                f"Selected area: {pixel_size}x{pixel_size} pixels\n"
+                f"Contains {num_pixels} pixels (scale: {float(pixel_size)/num_pixels:.2f})\n"
+                f"Grid offset: ({offset_x}, {offset_y}) pixels"
+            )
+        else:
+            self.pixel_info_label.setText(
+                f"Selected pixel size: {pixel_size}x{pixel_size} pixels\n"
+                f"Grid offset: ({offset_x}, {offset_y}) pixels"
+            )
     
     def browseImage(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -869,18 +1073,24 @@ class PixelArtDownscalerApp(QMainWindow):
             # Load the image for the pixel selection view
             self.drop_area.setImage(file_path)
             
-            # Reset zoom and pan for both views
-            self.drop_area.zoom_factor = 2  # Set input image to 2x by default
+            # Calculate the scale based on selection size and number of pixels
+            selection_size = self.selection_size_input.value() if hasattr(self, 'selection_size_input') else 1
+            num_pixels = self.num_pixels_input.value() if hasattr(self, 'num_pixels_input') else 1
+            scale_to_use = selection_size / max(1, num_pixels)
+            
+            # Set initial zoom level for both views
+            orig_zoom = 2  # Set input image to 2x by default
+            self.drop_area.zoom_factor = orig_zoom
             self.drop_area.pan_offset_x = 0
             self.drop_area.pan_offset_y = 0
-            self.preview_viewer.zoom_factor = 2
+            
+            # Scale preview zoom to match visual size
+            self.preview_viewer.zoom_factor = orig_zoom * scale_to_use
             self.preview_viewer.pan_offset_x = 0
             self.preview_viewer.pan_offset_y = 0
-            # Update zoom label
-            self.zoom_label.setText(f"Zoom: {self.drop_area.zoom_factor}x")
             
-            # Update the zoom label
-            self.zoom_label.setText(f"Zoom: {self.drop_area.zoom_factor}x")
+            # Update zoom label
+            self.zoom_label.setText(f"Zoom: {self.drop_area.zoom_factor:.2f}x")
             
             # Connect pixel selection signal if not already connected
             try:
@@ -893,8 +1103,10 @@ class PixelArtDownscalerApp(QMainWindow):
             self.process_button.setEnabled(True)
             self.status_bar.showMessage(f"Loaded: {os.path.basename(file_path)}. Select a pixel or adjust settings manually.")
             
-            # Create a simple test image for the preview area
-            self.showTestPreview()
+            # Set up the preview area with an initial blank image (don't show test image if loading a real image)
+            blank_img = Image.new("RGBA", (100, 100), (240, 240, 240, 255))
+            self.preview_viewer.setImage(blank_img)
+            self.preview_viewer.setText("Select a pixel above and click 'Update Preview'")
             
         except Exception as e:
             self.status_bar.showMessage("Error loading image")
@@ -903,22 +1115,65 @@ class PixelArtDownscalerApp(QMainWindow):
     def showTestPreview(self):
         """Show a test image in the preview to verify display works"""
         try:
-            # Create a simple 3x3 test image
-            test_img = Image.new("RGBA", (3, 3), (255, 255, 255, 255))
+            # Default to a scale of 2 for a clear test image
+            scale_to_use = 2.0
             
-            # Add some colored pixels
-            test_img.putpixel((0, 0), (255, 0, 0, 255))  # Red
-            test_img.putpixel((1, 1), (0, 255, 0, 255))  # Green
-            test_img.putpixel((2, 2), (0, 0, 255, 255))  # Blue
+            # Create a small original test image (for the input view)
+            orig_size = 4
+            test_orig = Image.new("RGBA", (orig_size, orig_size), (255, 255, 255, 255))
+            
+            # Add a clear checkerboard pattern
+            test_orig.putpixel((0, 0), (255, 0, 0, 255))  # Red
+            test_orig.putpixel((1, 1), (255, 0, 0, 255))  # Red
+            test_orig.putpixel((2, 2), (255, 0, 0, 255))  # Red
+            test_orig.putpixel((3, 3), (255, 0, 0, 255))  # Red
+            test_orig.putpixel((0, 2), (0, 0, 255, 255))  # Blue
+            test_orig.putpixel((1, 3), (0, 0, 255, 255))  # Blue
+            test_orig.putpixel((2, 0), (0, 0, 255, 255))  # Blue
+            test_orig.putpixel((3, 1), (0, 0, 255, 255))  # Blue
+            
+            # Scale up for better visibility (this doesn't affect the scaling logic, just makes it visible)
+            display_scale = 20
+            test_orig = test_orig.resize((orig_size * display_scale, orig_size * display_scale), Image.NEAREST)
+            
+            # Load the original test image in the original viewer
+            self.drop_area.image = test_orig
+            self.drop_area.updatePixmap()
+            
+            # Create a scaled-down version (preview) - half the size to simulate downscaling
+            scaled_size = int(orig_size / scale_to_use)
+            test_scaled = Image.new("RGBA", (scaled_size, scaled_size), (255, 255, 255, 255))
+            
+            # Add a matching pattern, appropriately scaled down
+            test_scaled.putpixel((0, 0), (255, 0, 0, 255))  # Red
+            test_scaled.putpixel((1, 1), (0, 0, 255, 255))  # Blue
             
             # Scale up for better visibility
-            scale = 50
-            test_img = test_img.resize((3 * scale, 3 * scale), Image.NEAREST)
+            test_scaled = test_scaled.resize((scaled_size * display_scale, scaled_size * display_scale), Image.NEAREST)
             
             # Update preview viewer
-            self.preview_viewer.setImage(test_img)
+            self.preview_viewer.setImage(test_scaled)
             
-            self.status_bar.showMessage("Test pattern displayed in preview")
+            # Set zoom levels to maintain visual size ratio
+            orig_zoom = 2.0  # Default input zoom
+            self.drop_area.zoom_factor = orig_zoom
+            self.preview_viewer.zoom_factor = orig_zoom * scale_to_use
+            
+            # Reset pan offsets
+            self.drop_area.pan_offset_x = 0
+            self.drop_area.pan_offset_y = 0
+            self.preview_viewer.pan_offset_x = 0
+            self.preview_viewer.pan_offset_y = 0
+            
+            # Update zoom label
+            self.zoom_label.setText(f"Zoom: {orig_zoom:.2f}x")
+            
+            # Update scale value in UI to match the test scale
+            if hasattr(self, 'selection_size_input') and hasattr(self, 'num_pixels_input'):
+                self.selection_size_input.setValue(int(scale_to_use))
+                self.num_pixels_input.setValue(1)
+            
+            self.status_bar.showMessage(f"Test pattern displayed. Scale: {scale_to_use}x (each preview pixel = {scale_to_use} input pixels)")
             
         except Exception as e:
             print(f"Test preview error: {str(e)}")
@@ -939,8 +1194,14 @@ class PixelArtDownscalerApp(QMainWindow):
             pil_img = Image.open(file_path)
             width, height = pil_img.size
             
-            # Get the scale and offset to use from the UI
-            scale_to_use = self.scale_input.value()
+            # Get the selection size, number of pixels, and calculate scale
+            selection_size = self.selection_size_input.value()
+            num_pixels = self.num_pixels_input.value()
+            
+            # Calculate the scale (selection size / number of pixels)
+            # If num_pixels is 0, treat selection as 1 pixel (1:1 mapping)
+            scale_to_use = selection_size / max(1, num_pixels)
+            
             offset_x = self.offset_x_input.value()
             offset_y = self.offset_y_input.value()
             
@@ -948,14 +1209,24 @@ class PixelArtDownscalerApp(QMainWindow):
             export_original_size = self.orig_size_check.isChecked()
             color_threshold = self.color_threshold_slider.value()
             use_median = self.use_median_check.isChecked()
+            ignore_outer_pixels = self.ignore_outer_check.isChecked()
             custom_upscale_factor = None
             if self.custom_upscale_check.isChecked():
                 custom_upscale_factor = self.custom_upscale.value()
             
-            self.status_bar.showMessage(f"Using pixel size: {scale_to_use}x with offset ({offset_x}, {offset_y})")
+            # Show scale info in status bar
+            if num_pixels > 1:
+                self.status_bar.showMessage(
+                    f"Using fractional scale: {scale_to_use:.2f} (selection size {selection_size} / {num_pixels} pixels)"
+                    f" with offset ({offset_x}, {offset_y})"
+                )
+            else:
+                self.status_bar.showMessage(
+                    f"Using pixel size: {scale_to_use:.2f}x with offset ({offset_x}, {offset_y})"
+                )
             QApplication.processEvents()
             
-            print(f"DEBUG: Processing with pixel size: {scale_to_use}x, offset: ({offset_x}, {offset_y})")
+            print(f"DEBUG: Processing with scale: {scale_to_use:.2f}x, offset: ({offset_x}, {offset_y})")
             
             # Safety check - if not using median, make sure it's safe
             if not use_median:
@@ -985,7 +1256,8 @@ class PixelArtDownscalerApp(QMainWindow):
                 upscale_factor=None,  # Will be auto-calculated in the function
                 export_original_size=export_original_size,
                 color_threshold=color_threshold,
-                use_median=use_median
+                use_median=use_median,
+                ignore_outer_pixels=ignore_outer_pixels
             )
             
             # Process additional custom upscale if requested
@@ -999,7 +1271,8 @@ class PixelArtDownscalerApp(QMainWindow):
                     upscale_factor=custom_upscale_factor,
                     export_original_size=False,
                     color_threshold=color_threshold,
-                    use_median=use_median
+                    use_median=use_median,
+                    ignore_outer_pixels=ignore_outer_pixels
                 )
             
             # Create success message
@@ -1026,9 +1299,14 @@ class PixelArtDownscalerApp(QMainWindow):
                     # Update the preview with the final result
                     self.preview_viewer.setImage(clean_img)
                     
-                    # Set zoom level to compensate for downscaling
-                    scale_to_use = self.scale_input.value()
-                    self.preview_viewer.zoom_factor = min(10, max(1, int(self.drop_area.zoom_factor * scale_to_use)))
+                        # Calculate the scale based on selection size and number of pixels
+                    selection_size = self.selection_size_input.value()
+                    num_pixels = self.num_pixels_input.value()
+                    scale_to_use = selection_size / max(1, num_pixels)
+                    
+                    # Scale the zoom to match visual size
+                    orig_zoom = self.drop_area.zoom_factor
+                    self.preview_viewer.zoom_factor = min(10, max(1, int(orig_zoom * scale_to_use)))
                     self.preview_viewer.update()
                     
                     # Update the status

@@ -4,7 +4,9 @@
       "Bash(just quickstart:*)",
       "Bash(source:*)",
       "Bash(python:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(rm:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

@@ -595,22 +595,26 @@ class PixelArtDownscaler:
             return uniform_blocks / total_blocks
         return 0
     
-    def downscale_image(self, img, scale, color_threshold=15, use_median=False):
+    def downscale_image(self, img, scale, color_threshold=15, use_median=False, ignore_outer_pixels=True):
         """
-        Downscale the image by the given scale factor, grouping similar colors.
+        Downscale the image by the given scale factor (can be fractional), grouping similar colors.
         
         Parameters:
         - img: Input PIL image
-        - scale: Scale factor to reduce by
+        - scale: Scale factor to reduce by (can be fractional, e.g., 4.5)
         - color_threshold: Maximum distance between colors to be considered the same group
         - use_median: If True, use median color instead of most frequent
+        - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
         """
         # Convert image to RGBA to ensure alpha channel is preserved
         img = img.convert("RGBA")
         
         width, height = img.size
-        new_width = width // scale
-        new_height = height // scale
+        
+        # Handle fractional scale factor
+        # The new dimensions are original dimensions divided by scale
+        new_width = int(width / scale)
+        new_height = int(height / scale)
         
         # Create a new image for the result
         result = Image.new("RGBA", (new_width, new_height))
@@ -626,8 +630,22 @@ class PixelArtDownscaler:
         
         for y in range(new_height):
             for x in range(new_width):
+                # Calculate the exact boundaries of this pixel in the original image
+                # For fractional scales, we need to handle differently
+                x_start = int(x * scale)
+                y_start = int(y * scale)
+                x_end = int((x + 1) * scale)
+                y_end = int((y + 1) * scale)
+                
+                # Make sure we don't go out of bounds
+                x_end = min(x_end, width)
+                y_end = min(y_end, height)
+                
                 # Extract the block of pixels that make up this 'art pixel'
-                block = img_array[y*scale:(y+1)*scale, x*scale:(x+1)*scale]
+                block = img_array[y_start:y_end, x_start:x_end]
+                
+                if block.size == 0:  # Skip empty blocks
+                    continue
                 
                 # For alpha channel, we need special handling
                 alpha_values = block[:, :, 3]
@@ -657,8 +675,17 @@ class PixelArtDownscaler:
                     continue
                 
                 # For fully opaque blocks, use color quantization
-                # Reshape to a list of RGB values (ignoring alpha since it's all 255)
-                colors = block[:, :, :3].reshape(-1, 3)
+                # Determine which pixels to consider for color selection
+                block_height, block_width = block.shape[:2]
+                
+                if ignore_outer_pixels and block_width > 2 and block_height > 2:
+                    # Ignore the outermost pixels for color determination
+                    # Extract the inner block by removing the outer border
+                    inner_block = block[1:-1, 1:-1, :3]
+                    colors = inner_block.reshape(-1, 3)
+                else:
+                    # Use all pixels if block is too small or ignoring outer pixels is disabled
+                    colors = block[:, :, :3].reshape(-1, 3)
                 
                 if use_median:
                     # Simple median color (less affected by outliers than mean)
@@ -790,24 +817,25 @@ class PixelArtDownscaler:
         return output_path
     
     def process_image(self, file_path, force_scale=None, upscale_factor=None, export_original_size=True, 
-                  color_threshold=15, use_median=False):
+                  color_threshold=15, use_median=False, ignore_outer_pixels=True):
         """
         Process a single image file.
         
         Parameters:
         - file_path: Path to the image file
-        - force_scale: Force a specific scale factor instead of auto-detecting
+        - force_scale: Force a specific scale factor instead of auto-detecting (can be fractional)
         - upscale_factor: Factor to upscale after downscaling (using nearest neighbor)
         - export_original_size: Whether to export an image matching original dimensions
         - color_threshold: Threshold for color similarity when clustering (0-255)
         - use_median: Use median color instead of color clustering
+        - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
         """
         try:
             # Load the image
             img = Image.open(file_path)
             original_size = img.size
             
-            # Use manually specified scale
+            # Use manually specified scale (can be fractional)
             pixel_scale = force_scale if force_scale else 1
             print(f"Using pixel scale: {pixel_scale}")
             
@@ -816,7 +844,7 @@ class PixelArtDownscaler:
                 return None, None
             
             # Downscale the image to true 1:1 pixel ratio (removes compression artifacts)
-            downscaled_img = self.downscale_image(img, pixel_scale, color_threshold, use_median)
+            downscaled_img = self.downscale_image(img, pixel_scale, color_threshold, use_median, ignore_outer_pixels)
             
             # Add suffix based on settings used
             suffix = "downscaled"
@@ -824,6 +852,14 @@ class PixelArtDownscaler:
                 suffix += "_median"
             elif color_threshold != 15:  # Only add suffix if not using default
                 suffix += f"_t{color_threshold}"
+            
+            # Add fractional indicator if scale is not an integer
+            if pixel_scale != int(pixel_scale):
+                suffix += f"_f{pixel_scale:.2f}".replace('.', '_')
+            
+            # Add indicator for outer pixel handling
+            if ignore_outer_pixels:
+                suffix += "_io"  # io = ignore outer
             
             # Save the pure 1:1 pixel ratio version
             downscaled_path = self.get_output_path(file_path, suffix=suffix)
@@ -834,6 +870,12 @@ class PixelArtDownscaler:
                 print(f"Image successfully downscaled using median color and saved to: {downscaled_path}")
             else:
                 print(f"Image successfully downscaled using color clustering (threshold={color_threshold}) and saved to: {downscaled_path}")
+            
+            # Additional info for fractional scales and pixel ignoring
+            if pixel_scale != int(pixel_scale):
+                print(f"Used fractional scale of {pixel_scale:.2f}")
+            if ignore_outer_pixels:
+                print("Ignored outermost pixels for color determination")
 
             # If no upscale factor is specified, but original size preservation is requested
             if upscale_factor is None and export_original_size:
@@ -875,25 +917,38 @@ class PixelArtDownscaler:
 def main():
     parser = argparse.ArgumentParser(description='Clean up pixel art for social media by downscaling to true 1:1 ratio then upscaling with nearest neighbor')
     parser.add_argument('image_path', help='Path to the image file to process')
-    parser.add_argument('--scale', type=int, help='Force a specific downscale factor instead of auto-detecting')
+    parser.add_argument('--scale', type=float, help='Force a specific downscale factor instead of auto-detecting (can be fractional, e.g. 4.5)')
+    parser.add_argument('--pixels', type=int, help='Number of pixels selected (used with --selection to calculate fractional scale)')
+    parser.add_argument('--selection', type=int, help='Size of selection in pixels (used with --pixels to calculate fractional scale)')
     parser.add_argument('--upscale', type=int, help='Factor to upscale after downscaling (default: auto-calculated to match original size)')
     parser.add_argument('--no-upscale', action='store_true', help='Skip creating an upscaled version')
     parser.add_argument('--custom-upscale', type=int, help='Create additional upscaled version with this factor')
     parser.add_argument('--color-threshold', type=int, default=15, help='Color similarity threshold (0-255, default: 15). Higher values group more colors together')
     parser.add_argument('--use-median', action='store_true', help='Use median color instead of color clustering')
+    parser.add_argument('--include-outer-pixels', action='store_true', help='Include outermost pixels when determining colors (by default they are ignored)')
     
     args = parser.parse_args()
+    
+    # Calculate fractional scale if pixels and selection are provided
+    calculated_scale = None
+    if args.pixels is not None and args.selection is not None and args.pixels > 0:
+        calculated_scale = args.selection / args.pixels
+        print(f"Calculated fractional scale: {calculated_scale:.2f} (selection size {args.selection} / {args.pixels} pixels)")
+    
+    # Use calculated scale if provided, otherwise use scale argument
+    force_scale = calculated_scale if calculated_scale is not None else args.scale
     
     downscaler = PixelArtDownscaler()
     
     # Process with main options
     downscaler.process_image(
         args.image_path, 
-        force_scale=args.scale,
+        force_scale=force_scale,
         upscale_factor=args.upscale,
         export_original_size=not args.no_upscale,
         color_threshold=args.color_threshold,
-        use_median=args.use_median
+        use_median=args.use_median,
+        ignore_outer_pixels=not args.include_outer_pixels
     )
     
     # Process additional custom upscale if requested
@@ -901,11 +956,12 @@ def main():
         print(f"\nCreating additional {args.custom_upscale}x upscaled version:")
         downscaled_path, _ = downscaler.process_image(
             args.image_path,
-            force_scale=args.scale,
+            force_scale=force_scale,
             upscale_factor=args.custom_upscale,
             export_original_size=False,
             color_threshold=args.color_threshold,
-            use_median=args.use_median
+            use_median=args.use_median,
+            ignore_outer_pixels=not args.include_outer_pixels
         )
 
 if __name__ == "__main__":

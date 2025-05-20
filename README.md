@@ -28,9 +28,11 @@ A Python application that restores the crispness of pixel art images that have b
    ```
    Follow the on-screen instructions to add `uv` to your PATH.
 
-2. Install and run the GUI application:
+2. Clone the repository and install dependencies:
    ```bash
-   uvx --from git+https://github.com/wjhrdy/pixel-art-scaler pixel-art-scaler
+   git clone https://github.com/wjhrdy/pixel-art-scaler.git
+   cd pixel-art-scaler
+   uv pip install -e .
    ```
 ## Why Use Pixel Art Scaler
 
