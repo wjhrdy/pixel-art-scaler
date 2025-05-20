@@ -2,6 +2,8 @@
 
 A Python application that restores the crispness of pixel art images that have been shared online by detecting scale, removing compression artifacts, and reupscaling with nearest neighbor interpolation.
 
+![example image of the app](example.png)
+
 ## Features
 
 - Corrects grid alignment offset
