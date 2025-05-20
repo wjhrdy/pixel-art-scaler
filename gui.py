@@ -682,9 +682,34 @@ class PixelArtDownscalerApp(QMainWindow):
         color_layout.addWidget(self.use_median_check)
         
         # Ignore outer pixels option
-        self.ignore_outer_check = QCheckBox("Ignore outer pixels when determining color (reduces edge artifacts)")
+        ignore_outer_layout = QHBoxLayout()
+        self.ignore_outer_check = QCheckBox("Ignore outer pixels:")
         self.ignore_outer_check.setChecked(True)  # Enable by default for better results
-        color_layout.addWidget(self.ignore_outer_check)
+        ignore_outer_layout.addWidget(self.ignore_outer_check)
+        
+        # Slider for percentage of outer pixels to ignore
+        self.ignore_outer_slider = QSlider(Qt.Horizontal)
+        self.ignore_outer_slider.setMinimum(0)
+        self.ignore_outer_slider.setMaximum(90)  # 0-90% range
+        self.ignore_outer_slider.setValue(10)  # Default to 10%
+        self.ignore_outer_value = QLabel("10%")
+        
+        # Connect slider to value label
+        self.ignore_outer_slider.valueChanged.connect(lambda value: self.ignore_outer_value.setText(f"{value}%"))
+        # Enable/disable slider based on checkbox
+        self.ignore_outer_check.toggled.connect(self.ignore_outer_slider.setEnabled)
+        
+        ignore_outer_layout.addWidget(self.ignore_outer_slider)
+        ignore_outer_layout.addWidget(self.ignore_outer_value)
+        
+        # Add tooltip
+        self.ignore_outer_check.setToolTip("Ignore outer pixels when determining color to reduce edge artifacts")
+        self.ignore_outer_slider.setToolTip("Percentage of the outer pixels to ignore (0-90%)")
+        
+        # Enable slider only if checkbox is checked
+        self.ignore_outer_slider.setEnabled(self.ignore_outer_check.isChecked())
+        
+        color_layout.addLayout(ignore_outer_layout)
         
         # Update preview button
         update_preview_button = QPushButton("Update Preview")
@@ -944,7 +969,14 @@ class PixelArtDownscalerApp(QMainWindow):
             offset_y = self.offset_y_input.value()
             color_threshold = self.color_threshold_slider.value()
             use_median = self.use_median_check.isChecked()
-            ignore_outer_pixels = self.ignore_outer_check.isChecked()
+            
+            # Determine ignore_outer_pixels value based on checkbox and slider
+            if self.ignore_outer_check.isChecked():
+                ignore_outer_pixels = self.ignore_outer_slider.value()  # Get percentage (0-90)
+                if ignore_outer_pixels == 0:  # If slider is at 0%, treat as True for backward compatibility
+                    ignore_outer_pixels = True
+            else:
+                ignore_outer_pixels = False
             
             # Load the image
             img = Image.open(self.current_image_path)
@@ -954,8 +986,14 @@ class PixelArtDownscalerApp(QMainWindow):
             if offset_x > 0 or offset_y > 0:
                 img = img.crop((offset_x, offset_y, width, height))
             
+            # Format ignore_outer_pixels value for debug display
+            if isinstance(ignore_outer_pixels, (int, float)) and ignore_outer_pixels != True:
+                ignore_display = f"{ignore_outer_pixels}%"
+            else:
+                ignore_display = str(ignore_outer_pixels)
+                
             print(f"DEBUG: Creating preview with scale={scale_to_use:.2f}, color_threshold={color_threshold}, " +
-                  f"use_median={use_median}, ignore_outer_pixels={ignore_outer_pixels}")
+                  f"use_median={use_median}, ignore_outer_pixels={ignore_display}")
             
             # Safety check for small images
             if int(width / scale_to_use) < 1 or int(height / scale_to_use) < 1:
@@ -1209,7 +1247,15 @@ class PixelArtDownscalerApp(QMainWindow):
             export_original_size = self.orig_size_check.isChecked()
             color_threshold = self.color_threshold_slider.value()
             use_median = self.use_median_check.isChecked()
-            ignore_outer_pixels = self.ignore_outer_check.isChecked()
+            
+            # Determine ignore_outer_pixels value based on checkbox and slider
+            if self.ignore_outer_check.isChecked():
+                ignore_outer_pixels = self.ignore_outer_slider.value()  # Get percentage (0-90)
+                if ignore_outer_pixels == 0:  # If slider is at 0%, treat as True for backward compatibility
+                    ignore_outer_pixels = True
+            else:
+                ignore_outer_pixels = False
+                
             custom_upscale_factor = None
             if self.custom_upscale_check.isChecked():
                 custom_upscale_factor = self.custom_upscale.value()

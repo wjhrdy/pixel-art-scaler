@@ -605,6 +605,7 @@ class PixelArtDownscaler:
         - color_threshold: Maximum distance between colors to be considered the same group
         - use_median: If True, use median color instead of most frequent
         - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
+                            If numeric (0-90), percentage of outer pixels to ignore from each side
         """
         # Convert image to RGBA to ensure alpha channel is preserved
         img = img.convert("RGBA")
@@ -679,10 +680,26 @@ class PixelArtDownscaler:
                 block_height, block_width = block.shape[:2]
                 
                 if ignore_outer_pixels and block_width > 2 and block_height > 2:
-                    # Ignore the outermost pixels for color determination
-                    # Extract the inner block by removing the outer border
-                    inner_block = block[1:-1, 1:-1, :3]
-                    colors = inner_block.reshape(-1, 3)
+                    # Determine how many pixels to ignore from each side
+                    if isinstance(ignore_outer_pixels, (int, float)) and 0 <= ignore_outer_pixels <= 90:
+                        # Calculate border size based on percentage (0-90%)
+                        border = max(1, int(min(block_width, block_height) * (ignore_outer_pixels / 100.0)))
+                        # Make sure we don't ignore too much (keep at least 2x2 inner block)
+                        border = min(border, (min(block_width, block_height) // 2) - 1)
+                        border = max(1, border)  # Ensure at least 1 pixel border
+                        
+                        # Extract the inner block by removing the calculated border
+                        if block_width > border*2 and block_height > border*2:
+                            inner_block = block[border:-border, border:-border, :3]
+                            colors = inner_block.reshape(-1, 3)
+                        else:
+                            # If border would be too large, default to ignoring just 1 pixel
+                            inner_block = block[1:-1, 1:-1, :3]
+                            colors = inner_block.reshape(-1, 3)
+                    else:
+                        # Traditional behavior - just ignore 1 pixel from each side
+                        inner_block = block[1:-1, 1:-1, :3]
+                        colors = inner_block.reshape(-1, 3)
                 else:
                     # Use all pixels if block is too small or ignoring outer pixels is disabled
                     colors = block[:, :, :3].reshape(-1, 3)
@@ -828,6 +845,19 @@ class PixelArtDownscaler:
         - export_original_size: Whether to export an image matching original dimensions
         - color_threshold: Threshold for color similarity when clustering (0-255)
         - use_median: Use median color instead of color clustering
+        - ignore_outer_pixels: If True, ignore 1 pixel from each side when determining color
+                            If numeric (0-90), percentage of outer pixels to ignore from each side
+        """
+        """
+        Process a single image file.
+        
+        Parameters:
+        - file_path: Path to the image file
+        - force_scale: Force a specific scale factor instead of auto-detecting (can be fractional)
+        - upscale_factor: Factor to upscale after downscaling (using nearest neighbor)
+        - export_original_size: Whether to export an image matching original dimensions
+        - color_threshold: Threshold for color similarity when clustering (0-255)
+        - use_median: Use median color instead of color clustering
         - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
         """
         try:
@@ -859,7 +889,11 @@ class PixelArtDownscaler:
             
             # Add indicator for outer pixel handling
             if ignore_outer_pixels:
-                suffix += "_io"  # io = ignore outer
+                if isinstance(ignore_outer_pixels, (int, float)) and ignore_outer_pixels > 0:
+                    # Add percentage to suffix
+                    suffix += f"_io{int(ignore_outer_pixels)}"  # io20 = ignore outer 20%
+                else:
+                    suffix += "_io"  # io = ignore outer
             
             # Save the pure 1:1 pixel ratio version
             downscaled_path = self.get_output_path(file_path, suffix=suffix)
@@ -875,7 +909,10 @@ class PixelArtDownscaler:
             if pixel_scale != int(pixel_scale):
                 print(f"Used fractional scale of {pixel_scale:.2f}")
             if ignore_outer_pixels:
-                print("Ignored outermost pixels for color determination")
+                if isinstance(ignore_outer_pixels, (int, float)) and ignore_outer_pixels > 0:
+                    print(f"Ignored outer {ignore_outer_pixels}% of pixels for color determination")
+                else:
+                    print("Ignored outermost pixels for color determination")
 
             # If no upscale factor is specified, but original size preservation is requested
             if upscale_factor is None and export_original_size:
@@ -926,6 +963,7 @@ def main():
     parser.add_argument('--color-threshold', type=int, default=15, help='Color similarity threshold (0-255, default: 15). Higher values group more colors together')
     parser.add_argument('--use-median', action='store_true', help='Use median color instead of color clustering')
     parser.add_argument('--include-outer-pixels', action='store_true', help='Include outermost pixels when determining colors (by default they are ignored)')
+    parser.add_argument('--ignore-outer-percent', type=float, help='Percentage of outer pixels to ignore (0-90)')
     
     args = parser.parse_args()
     
@@ -938,6 +976,14 @@ def main():
     # Use calculated scale if provided, otherwise use scale argument
     force_scale = calculated_scale if calculated_scale is not None else args.scale
     
+    # Handle ignore_outer_pixels parameter
+    ignore_outer_pixels = True  # Default
+    if args.include_outer_pixels:
+        ignore_outer_pixels = False
+    elif args.ignore_outer_percent is not None:
+        # Clamp percentage to valid range
+        ignore_outer_pixels = max(0, min(90, args.ignore_outer_percent))
+    
     downscaler = PixelArtDownscaler()
     
     # Process with main options
@@ -948,7 +994,7 @@ def main():
         export_original_size=not args.no_upscale,
         color_threshold=args.color_threshold,
         use_median=args.use_median,
-        ignore_outer_pixels=not args.include_outer_pixels
+        ignore_outer_pixels=ignore_outer_pixels
     )
     
     # Process additional custom upscale if requested
@@ -961,7 +1007,7 @@ def main():
             export_original_size=False,
             color_threshold=args.color_threshold,
             use_median=args.use_median,
-            ignore_outer_pixels=not args.include_outer_pixels
+            ignore_outer_pixels=ignore_outer_pixels
         )
 
 if __name__ == "__main__":

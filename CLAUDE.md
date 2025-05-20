@@ -14,10 +14,10 @@ just quickstart
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Run the application (GUI)
-just run-gui
+uv run python gui.py
 
 # Process a file (CLI)
-just process /path/to/image.png
+uv run python cli.py /path/to/image.png
 ```
 
 ## Key Components
@@ -44,8 +44,5 @@ The pixel art scaling process works in these steps:
 6. Export both the clean 1:1 version and upscaled versions
 
 ## Commands
-- `just` - List all available commands
-- `just quickstart` - Set up environment and dependencies
-- `just run-gui` - Run the GUI application
-- `just process IMAGE_PATH` - Process an image with the CLI tool
-- `just clean` - Clean up environment
+- `uv run python gui.py` - Run the GUI application
+- `uv run python cli.py IMAGE_PATH` - Process an image with the CLI tool
