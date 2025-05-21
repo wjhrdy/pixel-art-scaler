@@ -123,7 +123,6 @@ class ImageViewer(QLabel):
             # Grid overlay has been removed to improve performance
         except Exception as e:
             # Fallback in case of rendering error
-            print(f"Error during painting: {str(e)}")
             painter.fillRect(self.rect(), QColor(240, 240, 240))
             painter.setPen(QColor(255, 0, 0))
             painter.drawText(self.rect(), Qt.AlignCenter, f"Error rendering image: {str(e)}")
@@ -249,7 +248,8 @@ class ImageViewer(QLabel):
 
 
 class DropArea(ImageViewer):
-    pixelSelected = Signal(int, int, int)
+    # Signal now includes width, height, offset_x, offset_y
+    pixelSelected = Signal(int, int, int, int)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -269,9 +269,13 @@ class DropArea(ImageViewer):
         self.dragging = False
         self.selection_rect = QRect()
         self.selection_start = None
-        self.pixel_size = 1
+        self.pixel_width = 1
+        self.pixel_height = 1
         self.offset_x = 0
         self.offset_y = 0
+        
+        # Grid overlay properties
+        self.show_grid = True  # Show grid by default
         
     def setImage(self, image_path):
         self.image = Image.open(image_path)
@@ -310,6 +314,28 @@ class DropArea(ImageViewer):
             # Draw with highlight color
             painter.setPen(QPen(QColor(255, 0, 0), 2))
             painter.drawRect(screen_rect)
+            
+            # Draw grid overlay based on the number of pixels set in the main window
+            # Only draw if grid visibility is enabled and there's a reasonable number of pixels
+            if hasattr(self, 'show_grid') and self.show_grid and hasattr(self, 'main_window') and self.main_window is not None and hasattr(self.main_window, 'num_pixels_input'):
+                num_pixels = self.main_window.num_pixels_input.value()
+                if 1 < num_pixels <= 16:  # Only show grid for reasonable subdivisions (2-16)
+                    # Draw grid lines to show the pixel subdivisions
+                    painter.setPen(QPen(QColor(100, 100, 255, 180), 1))
+                    
+                    # Calculate the size of each division
+                    division_width = rect_width / num_pixels
+                    division_height = rect_height / num_pixels
+                    
+                    # Draw vertical grid lines
+                    for i in range(1, num_pixels):
+                        x = rect_x + i * division_width
+                        painter.drawLine(int(x), rect_y, int(x), rect_y + rect_height)
+                    
+                    # Draw horizontal grid lines
+                    for i in range(1, num_pixels):
+                        y = rect_y + i * division_height
+                        painter.drawLine(rect_x, int(y), rect_x + rect_width, int(y))
     
     def mousePressEvent(self, event):
         # If no image is loaded, handle file selection
@@ -357,6 +383,13 @@ class DropArea(ImageViewer):
             
         # Handle selection dragging with left button (not during panning)
         if self.dragging and (event.buttons() & Qt.LeftButton) and self.pixmap and self.selection_start:
+            # Clear cached selection rectangle when actively dragging
+            if hasattr(self, '_cached_selection_rect'):
+                delattr(self, '_cached_selection_rect')
+            if hasattr(self, '_cached_selection_zoom'):
+                delattr(self, '_cached_selection_zoom')
+            if hasattr(self, '_cached_selection_pan'):
+                delattr(self, '_cached_selection_pan')
             # Calculate image coordinates
             scaled_width = self.pixmap.width() * self.zoom_factor
             scaled_height = self.pixmap.height() * self.zoom_factor
@@ -374,43 +407,23 @@ class DropArea(ImageViewer):
             width = abs(image_x - self.selection_start.x()) + 1
             height = abs(image_y - self.selection_start.y()) + 1
             
-            # Force square selection by using the larger dimension
-            square_size = max(width, height)
-            
             # Determine which direction we're dragging
             drag_right = image_x >= self.selection_start.x()
             drag_down = image_y >= self.selection_start.y()
             
-            # Calculate new coordinates to ensure a square
+            # Calculate the end coordinates based on current mouse position
             if drag_right:
-                end_x = self.selection_start.x() + square_size - 1
+                end_x = image_x
             else:
-                end_x = self.selection_start.x() - square_size + 1
+                end_x = image_x
                 
             if drag_down:
-                end_y = self.selection_start.y() + square_size - 1
+                end_y = image_y
             else:
-                end_y = self.selection_start.y() - square_size + 1
+                end_y = image_y
             
             # Ensure coordinates are within image bounds
             end_x = max(0, min(self.pixmap.width() - 1, end_x))
-            end_y = max(0, min(self.pixmap.height() - 1, end_y))
-            
-            # Recalculate square size if we hit boundaries
-            if drag_right:
-                new_square_size = end_x - self.selection_start.x() + 1
-                if drag_down:
-                    end_y = self.selection_start.y() + new_square_size - 1
-                else:
-                    end_y = self.selection_start.y() - new_square_size + 1
-            else:
-                new_square_size = self.selection_start.x() - end_x + 1
-                if drag_down:
-                    end_y = self.selection_start.y() + new_square_size - 1
-                else:
-                    end_y = self.selection_start.y() - new_square_size + 1
-                    
-            # Ensure y is within bounds
             end_y = max(0, min(self.pixmap.height() - 1, end_y))
             
             # Create the square selection rectangle
@@ -438,12 +451,16 @@ class DropArea(ImageViewer):
         # Calculate the pixel size and offset from the selection
         if not self.selection_rect.isEmpty() and self.selection_rect.width() > 0 and self.selection_rect.height() > 0:
             # The selected rectangle represents a single pixel in the original art
-            self.pixel_size = max(1, self.selection_rect.width())  # Use width as the pixel size
-            self.offset_x = self.selection_rect.x() % self.pixel_size  # Calculate offset
-            self.offset_y = self.selection_rect.y() % self.pixel_size
+            # Store both width and height for potentially non-square pixels
+            self.pixel_width = max(1, self.selection_rect.width())
+            self.pixel_height = max(1, self.selection_rect.height())
             
-            # Emit signal with selected pixel information
-            self.pixelSelected.emit(self.pixel_size, self.offset_x, self.offset_y)
+            # Calculate offsets based on the actual dimensions
+            self.offset_x = self.selection_rect.x() % self.pixel_width
+            self.offset_y = self.selection_rect.y() % self.pixel_height
+            
+            # Emit signal with pixel information - we'll include both width and height
+            self.pixelSelected.emit(self.pixel_width, self.pixel_height, self.offset_x, self.offset_y)
             
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -488,6 +505,18 @@ class DropArea(ImageViewer):
             else:
                 QMessageBox.warning(self, "Invalid File", 
                                     "Please drop a valid image file (PNG, JPG, GIF, BMP).")
+                                    
+    def resizeEvent(self, event):
+        # Call parent implementation
+        super().resizeEvent(event)
+        
+        # Clear the cached selection rectangle to force recalculation on resize
+        if hasattr(self, '_cached_selection_rect'):
+            delattr(self, '_cached_selection_rect')
+        if hasattr(self, '_cached_selection_zoom'):
+            delattr(self, '_cached_selection_zoom')
+        if hasattr(self, '_cached_selection_pan'):
+            delattr(self, '_cached_selection_pan')
 
 class PixelArtDownscalerApp(QMainWindow):
     def __init__(self):
@@ -632,6 +661,21 @@ class PixelArtDownscalerApp(QMainWindow):
         
         manual_layout.addLayout(scale_layout)
         
+        # Add checkbox for showing grid in selection
+        grid_layout = QHBoxLayout()
+        self.show_grid_check = QCheckBox("Show grid overlay in selection")
+        self.show_grid_check.setChecked(True)  # Enable by default
+        self.show_grid_check.setToolTip("Show grid lines in the selection rectangle to visualize pixel divisions")
+        grid_layout.addWidget(self.show_grid_check)
+        
+        # Connect to toggle grid visibility
+        self.show_grid_check.toggled.connect(self.toggleGridVisibility)
+        
+        # Set initial grid visibility on the drop area
+        self.drop_area.show_grid = True
+        
+        manual_layout.addLayout(grid_layout)
+        
         # Add a separator line
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
@@ -659,6 +703,22 @@ class PixelArtDownscalerApp(QMainWindow):
         color_group = QGroupBox("Color Processing Options")
         color_layout = QVBoxLayout(color_group)
         
+        # Simple color processing option (renamed from 'use median')
+        self.use_median_check = QCheckBox("Simple color processing (faster, better for JPG compression)")
+        self.use_median_check.setChecked(True)  # Enable by default for better performance and stability
+        self.use_median_check.setToolTip("When enabled, uses median color for each pixel block. When disabled, uses advanced color clustering.")
+        color_layout.addWidget(self.use_median_check)
+        
+        # Advanced color processing section (hidden by default)
+        self.advanced_color_widget = QWidget()
+        advanced_color_layout = QVBoxLayout(self.advanced_color_widget)
+        advanced_color_layout.setContentsMargins(20, 5, 5, 5)  # Add left margin for nested appearance
+        
+        # Add description for advanced color processing
+        advanced_description = QLabel("<i>Advanced color processing clusters similar colors together, like a limited color palette.</i>")
+        advanced_description.setWordWrap(True)
+        advanced_color_layout.addWidget(advanced_description)
+        
         # Color clustering options
         from PySide6.QtWidgets import QSlider
         color_threshold_layout = QHBoxLayout()
@@ -668,18 +728,23 @@ class PixelArtDownscalerApp(QMainWindow):
         self.color_threshold_slider.setMaximum(50)
         self.color_threshold_slider.setValue(15)  # Default value
         self.color_threshold_value = QLabel("15")
+        self.color_threshold_slider.setToolTip("Higher values combine more similar colors. Lower values preserve more distinct colors.")
         
         self.color_threshold_slider.valueChanged.connect(lambda value: self.color_threshold_value.setText(str(value)))
         
         color_threshold_layout.addWidget(color_threshold_label)
         color_threshold_layout.addWidget(self.color_threshold_slider)
         color_threshold_layout.addWidget(self.color_threshold_value)
-        color_layout.addLayout(color_threshold_layout)
+        advanced_color_layout.addLayout(color_threshold_layout)
         
-        # Median option
-        self.use_median_check = QCheckBox("Use median color (better for JPG compression)")
-        self.use_median_check.setChecked(True)  # Enable by default for better performance and stability
-        color_layout.addWidget(self.use_median_check)
+        # Add the advanced color widget to the main color layout
+        color_layout.addWidget(self.advanced_color_widget)
+        
+        # Connect the checkbox to show/hide advanced options
+        self.use_median_check.toggled.connect(lambda checked: self.advanced_color_widget.setVisible(not checked))
+        
+        # Initially hide advanced options since median is checked by default
+        self.advanced_color_widget.setVisible(False)
         
         # Ignore outer pixels option
         ignore_outer_layout = QHBoxLayout()
@@ -726,6 +791,12 @@ class PixelArtDownscalerApp(QMainWindow):
         self.orig_size_check = QCheckBox("Create clean version at original size")
         self.orig_size_check.setChecked(True)
         upscale_layout.addWidget(self.orig_size_check)
+        
+        # Preserve aspect ratio option
+        self.preserve_aspect_check = QCheckBox("Preserve original pixel aspect ratio during upscaling (non-square pixels)")
+        self.preserve_aspect_check.setChecked(True)  # Enable by default
+        self.preserve_aspect_check.setToolTip("When checked, preserves the original rectangular pixels during upscaling. When unchecked, forces square pixels in the upscaled output.")
+        upscale_layout.addWidget(self.preserve_aspect_check)
         
         # Custom upscale
         custom_upscale_layout = QHBoxLayout()
@@ -789,10 +860,19 @@ class PixelArtDownscalerApp(QMainWindow):
         # (no longer constrained to 1-10)
         zoom_factor = max(0.1, zoom_factor)
         
-        # Calculate the scale based on selection size and number of pixels
+        # Calculate the scales based on selection size and number of pixels
         selection_size = self.selection_size_input.value() if hasattr(self, 'selection_size_input') else 1
         num_pixels = self.num_pixels_input.value() if hasattr(self, 'num_pixels_input') else 1
-        scale_to_use = selection_size / max(1, num_pixels)
+        
+        # Get separate scales for X and Y if available
+        if hasattr(self, 'scale_x') and hasattr(self, 'scale_y'):
+            scale_x = self.scale_x
+            scale_y = self.scale_y
+            # Use average for the preview scaling
+            scale_to_use = (scale_x + scale_y) / 2
+        else:
+            # Fall back to using selection_size if separate scales aren't set
+            scale_to_use = selection_size / max(1, num_pixels)
         
         # Add flag to prevent recursive updates
         if hasattr(self, '_syncing_zoom') and self._syncing_zoom:
@@ -801,8 +881,7 @@ class PixelArtDownscalerApp(QMainWindow):
         self._syncing_zoom = True
         
         try:
-            # Log debug info
-            print(f"DEBUG: syncZoom called with zoom_factor={zoom_factor}, source_viewer={source_viewer}, scale_to_use={scale_to_use:.2f}")
+            # Synchronize zoom between views
             
             # Update zoom factors accounting for scaling between images
             if source_viewer == self.preview_viewer:
@@ -816,7 +895,6 @@ class PixelArtDownscalerApp(QMainWindow):
                     self.drop_area.update()
                     # Update zoom label to show the input image zoom level
                     self.zoom_label.setText(f"Zoom: {orig_zoom:.2f}x")
-                    print(f"DEBUG: Updated drop_area zoom to {orig_zoom} based on preview zoom {zoom_factor}")
             else:
                 # If zoom came from drop area or elsewhere, update the drop area first
                 if hasattr(self, 'drop_area'):
@@ -824,7 +902,6 @@ class PixelArtDownscalerApp(QMainWindow):
                     self.drop_area.update()
                     # Update zoom label to show the input image zoom level
                     self.zoom_label.setText(f"Zoom: {zoom_factor:.2f}x")
-                    print(f"DEBUG: Set drop_area zoom to {zoom_factor}")
                 
                 # Then scale the preview zoom to match visual size
                 if hasattr(self, 'preview_viewer'):
@@ -834,7 +911,6 @@ class PixelArtDownscalerApp(QMainWindow):
                     preview_zoom = max(0.1, zoom_factor * scale_to_use)
                     self.preview_viewer.zoom_factor = preview_zoom
                     self.preview_viewer.update()
-                    print(f"DEBUG: Set preview_viewer zoom to {preview_zoom} based on input zoom {zoom_factor} and scale {scale_to_use:.2f}")
         finally:
             # Always clear the flag
             self._syncing_zoom = False
@@ -903,25 +979,71 @@ class PixelArtDownscalerApp(QMainWindow):
         num_pixels = self.num_pixels_input.value()
         
         if num_pixels > 0:
-            # Calculate the scale (selection size / number of pixels)
-            scale = selection_size / num_pixels
-            # Update the scale display
-            self.scale_display.setText(f"{scale:.2f}")
+            # Get the pixel dimensions from the selection or use defaults if not available
+            pixel_width = getattr(self.drop_area, 'pixel_width', selection_size)
+            pixel_height = getattr(self.drop_area, 'pixel_height', selection_size)
             
-            # Update the pixel info label to show the fractional scale
+            # Calculate scales for each dimension
+            scale_x = pixel_width / num_pixels
+            scale_y = pixel_height / num_pixels
+            
+            # Update the scale display - show both dimensions if they differ
+            if abs(scale_x - scale_y) > 0.01:
+                self.scale_display.setText(f"X:{scale_x:.2f}, Y:{scale_y:.2f}")
+            else:
+                self.scale_display.setText(f"{scale_x:.2f}")
+            
+            # Store the scales as properties of the main window
+            self.scale_x = scale_x
+            self.scale_y = scale_y
+            
+            # Force the drop area to redraw with the updated grid
+            if hasattr(self, 'drop_area'):
+                self.drop_area.update()
+            
+            # Get the top-left coordinates of the selection rectangle if we have one
+            selection_x = 0
+            selection_y = 0
+            if hasattr(self.drop_area, 'selection_rect') and not self.drop_area.selection_rect.isEmpty():
+                selection_x = self.drop_area.selection_rect.x()
+                selection_y = self.drop_area.selection_rect.y()
+            
+            # Calculate the proper offset based on the top-left coordinates and scales
+            if num_pixels > 1 and scale_x > 0 and scale_y > 0:
+                # Calculate offsets based on the separate scales for each dimension
+                new_offset_x = selection_x % scale_x
+                new_offset_y = selection_y % scale_y
+                
+                # Using separate scales for X and Y dimensions
+                # Calculated offsets based on separate scales
+                
+                # Update the offset inputs with the new values
+                self.offset_x_input.setValue(int(new_offset_x))
+                self.offset_y_input.setValue(int(new_offset_y))
+            
+            # Update the pixel info label with the calculated values
             if hasattr(self, 'pixel_info_label'):
                 offset_x = self.offset_x_input.value()
                 offset_y = self.offset_y_input.value()
                 
                 if num_pixels > 1:
-                    self.pixel_info_label.setText(
-                        f"Selected area: {selection_size}x{selection_size} pixels\n"
-                        f"Contains {num_pixels} pixels (scale: {scale:.2f})\n"
-                        f"Grid offset: ({offset_x}, {offset_y}) pixels"
-                    )
+                    # Include information about different scales for each axis if they differ
+                    if abs(scale_x - scale_y) > 0.01:
+                        self.pixel_info_label.setText(
+                            f"Selected area: {pixel_width}x{pixel_height} pixels\n"
+                            f"Contains {num_pixels}x{num_pixels} pixels\n"
+                            f"Scale: X:{scale_x:.2f}, Y:{scale_y:.2f}\n"
+                            f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                        )
+                    else:
+                        self.pixel_info_label.setText(
+                            f"Selected area: {pixel_width}x{pixel_height} pixels\n"
+                            f"Contains {num_pixels}x{num_pixels} pixels (scale: {scale_x:.2f})\n"
+                            f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                        )
                 else:
                     self.pixel_info_label.setText(
-                        f"Selected pixel size: {selection_size}x{selection_size} pixels\n"
+                        f"Selected 1 pixel of size {pixel_width}x{pixel_height}\n"
                         f"Grid offset: ({offset_x}, {offset_y}) pixels"
                     )
     
@@ -965,6 +1087,15 @@ class PixelArtDownscalerApp(QMainWindow):
             # If num_pixels is 0, treat selection as 1 pixel (1:1 mapping)
             scale_to_use = selection_size / max(1, num_pixels)
             
+            # Get separate scales for X and Y if they exist
+            if hasattr(self, 'scale_x') and hasattr(self, 'scale_y'):
+                scale_x = self.scale_x
+                scale_y = self.scale_y
+            else:
+                # If we don't have separate scales, use the same scale for both
+                scale_x = scale_to_use
+                scale_y = scale_to_use
+            
             offset_x = self.offset_x_input.value()
             offset_y = self.offset_y_input.value()
             color_threshold = self.color_threshold_slider.value()
@@ -992,28 +1123,41 @@ class PixelArtDownscalerApp(QMainWindow):
             else:
                 ignore_display = str(ignore_outer_pixels)
                 
-            print(f"DEBUG: Creating preview with scale={scale_to_use:.2f}, color_threshold={color_threshold}, " +
-                  f"use_median={use_median}, ignore_outer_pixels={ignore_display}")
             
             # Safety check for small images
-            if int(width / scale_to_use) < 1 or int(height / scale_to_use) < 1:
+            if int(width / scale_x) < 1 or int(height / scale_y) < 1:
                 self.preview_viewer.setText("Image too small for selected scale")
                 return
             
             # Create a downscaled preview using the current settings
             try:
-                # Add a safety check - if median is not selected, ensure color clustering works
+                # Add a safety check - if advanced color processing is selected, ensure clustering works
                 if not use_median:
-                    # If color clustering is likely to fail (with very small scale), use simple mean instead
-                    if scale_to_use <= 2:
-                        # For very small scales, force use_median to True as a safer alternative
+                    # If color clustering is likely to fail (with very small scale), use simple color processing
+                    if min(scale_x, scale_y) <= 2:
+                        # For very small scales, force simple color processing as a safer alternative
                         use_median = True
-                        print("DEBUG: Small scale detected, using median for safety")
+                        self.status_bar.showMessage("Using simple color processing (safer for very small scales)")
+                        QApplication.processEvents()
+                
+                # For preview, we're applying the offset directly to the image object above
+                # rather than creating a temporary file, so we pass the image that already has the offset applied
+                
+                # Get aspect ratio if we have one stored
+                aspect_ratio = getattr(self, 'pixel_aspect_ratio', 1.0)
+                
+                # Get preserve aspect ratio setting
+                preserve_aspect_ratio = self.preserve_aspect_check.isChecked()
+
+                # If we're using simple color processing, pass color_threshold of 0 to disable clustering
+                # Otherwise, use the selected threshold for advanced color processing
+                effective_threshold = 0 if use_median else color_threshold
                 
                 preview_img = self.downscaler.downscale_image(
-                    img, 
-                    scale_to_use, 
-                    color_threshold=color_threshold, 
+                    img,  # This has offset and aspect ratio correction applied if needed
+                    scale_x, 
+                    scale_y,
+                    color_threshold=effective_threshold, 
                     use_median=use_median,
                     ignore_outer_pixels=ignore_outer_pixels
                 )
@@ -1045,54 +1189,153 @@ class PixelArtDownscalerApp(QMainWindow):
                 self.preview_viewer.pan_offset_x = self.drop_area.pan_offset_x
                 self.preview_viewer.pan_offset_y = self.drop_area.pan_offset_y
                 
-                # Print debug info
-                print(f"DEBUG: Original zoom: {orig_zoom}, Preview zoom: {preview_zoom}, Scale: {calculated_scale:.2f}")
-                print(f"DEBUG: Pan offsets - Original: ({self.drop_area.pan_offset_x}, {self.drop_area.pan_offset_y}), Preview: ({self.preview_viewer.pan_offset_x}, {self.preview_viewer.pan_offset_y})")
-                
                 # Update both views
                 self.drop_area.update()
                 self.preview_viewer.update()
                 
             except Exception as inner_e:
-                print(f"DEBUG: Error in downscale_image: {str(inner_e)}")
                 self.preview_viewer.setText(f"Error creating preview: {str(inner_e)}")
                 return
             
         except Exception as e:
             self.status_bar.showMessage(f"Preview update error: {str(e)}")
-            print(f"DEBUG: Preview error: {str(e)}")
             self.preview_viewer.setText(f"Error updating preview: {str(e)}")
     
-    def onPixelSelected(self, pixel_size, offset_x, offset_y):
-        # Update UI with selected pixel information
-        # For fractional scaling, we now use the pixel size as the selection size by default
-        # with the assumption that it represents 1 pixel. This can be adjusted by the user.
-        self.selection_size_input.setValue(pixel_size)
+    def onPixelSelected(self, pixel_width, pixel_height, offset_x, offset_y):
+        """
+        Handle pixel selection from the drag area.
+        
+        Parameters:
+        - pixel_width: Width of the selected pixel(s) in pixels
+        - pixel_height: Height of the selected pixel(s) in pixels
+        - offset_x: X offset of the grid from the image edge
+        - offset_y: Y offset of the grid from the image edge
+        """
+        # Store the raw dimensions - we'll work with these directly
+        # Instead of normalizing them, we'll keep the separate scales for x and y
+        
+        # Calculate the aspect ratio for informational purposes
+        aspect_ratio = pixel_width / pixel_height if pixel_height > 0 else 1.0
+        
+        # Store scales directly instead of trying to normalize dimensions
+        scale_x = pixel_width  # For single pixel selection (num_pixels=1)
+        scale_y = pixel_height
+        
+        # Store for future use
+        self.scale_x = scale_x
+        self.scale_y = scale_y
+        
+        # Grid visualization removed
+        
+        # Update UI values
+        self.selection_size_input.setValue(max(pixel_width, pixel_height))  # Use the larger dimension for input
         self.offset_x_input.setValue(offset_x)
         self.offset_y_input.setValue(offset_y)
+        
+        # Store aspect ratio for informational purposes
+        self.pixel_aspect_ratio = aspect_ratio
+        
+        # Create a label to display the aspect ratio in the UI
+        if not hasattr(self, 'aspect_ratio_label'):
+            # Add a new label to the UI next to the scale display
+            from PySide6.QtWidgets import QLabel
+            self.aspect_ratio_label = QLabel(f"Pixel Aspect Ratio: {aspect_ratio:.2f}")
+            # Find the parent layout of the scale_display if possible
+            for widget in self.findChildren(QLabel):
+                if widget.text().startswith("Calculated Scale"):
+                    # Get the parent layout of this widget
+                    if widget.parent() and hasattr(widget.parent(), 'layout'):
+                        parent_layout = widget.parent().layout()
+                        if parent_layout:
+                            # Add the new label to the layout
+                            parent_layout.addWidget(self.aspect_ratio_label)
+                            break
+        else:
+            # Update the existing label
+            self.aspect_ratio_label.setText(f"Pixel Aspect Ratio: {aspect_ratio:.2f}")
         
         # Calculate the actual scale to use based on the selection size and number of pixels
         num_pixels = self.num_pixels_input.value()
         if num_pixels > 0:
-            calculated_scale = pixel_size / num_pixels
+            calculated_scale = pixel_width / num_pixels
             # Update the scale display (read-only, calculated)
             self.scale_display.setText(f"{calculated_scale:.2f}")
+            
+            # Get the top-left coordinates of the selection rectangle
+            selection_x = 0
+            selection_y = 0
+            if hasattr(self.drop_area, 'selection_rect') and not self.drop_area.selection_rect.isEmpty():
+                selection_x = self.drop_area.selection_rect.x()
+                selection_y = self.drop_area.selection_rect.y()
+            
+            # If using multiple pixels (fractional scaling), recalculate offsets properly
+            if num_pixels > 1:
+                # Calculate the proper offsets based on the selection's top-left coordinates
+                # and the calculated scale (effective pixel size)
+                # Adjust for aspect ratio if needed
+                if abs(aspect_ratio - 1.0) > 0.01:  # Non-square pixels
+                    if aspect_ratio > 1.0:  # Wider than tall
+                        # Horizontal dimension is stretched, adjust x calculation
+                        adjusted_scale_x = calculated_scale / aspect_ratio
+                        adjusted_scale_y = calculated_scale
+                        new_offset_x = selection_x % adjusted_scale_x
+                        new_offset_y = selection_y % adjusted_scale_y
+                    else:  # Taller than wide
+                        # Vertical dimension is stretched, adjust y calculation
+                        adjusted_scale_x = calculated_scale
+                        adjusted_scale_y = calculated_scale * aspect_ratio
+                        new_offset_x = selection_x % adjusted_scale_x
+                        new_offset_y = selection_y % adjusted_scale_y
+                    
+                else:
+                    # Square pixels, standard calculation
+                    new_offset_x = selection_x % calculated_scale
+                    new_offset_y = selection_y % calculated_scale
+                
+                # Update the offset values
+                self.offset_x_input.setValue(int(new_offset_x))
+                self.offset_y_input.setValue(int(new_offset_y))
+                
+                # Update info label with all the details
+                if abs(aspect_ratio - 1.0) > 0.01:  # If non-square (with a small tolerance)
+                    self.pixel_info_label.setText(
+                        f"Selected area: {pixel_width}×{pixel_height} pixels (non-square, ratio: {aspect_ratio:.2f})\n"
+                        f"Contains {num_pixels} pixels (scale: {calculated_scale:.2f})\n"
+                        f"Grid offset: ({int(new_offset_x)}, {int(new_offset_y)}) pixels"
+                    )
+                else:
+                    self.pixel_info_label.setText(
+                        f"Selected area: {pixel_width}×{pixel_height} pixels\n"
+                        f"Contains {num_pixels} pixels (scale: {calculated_scale:.2f})\n"
+                        f"Grid offset: ({int(new_offset_x)}, {int(new_offset_y)}) pixels"
+                    )
+            else:
+                # For single pixel, use original offsets
+                if abs(aspect_ratio - 1.0) > 0.01:  # If non-square (with a small tolerance)
+                    self.pixel_info_label.setText(
+                        f"Selected pixel size: {pixel_width}×{pixel_height} pixels (non-square, ratio: {aspect_ratio:.2f})\n"
+                        f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                    )
+                else:
+                    self.pixel_info_label.setText(
+                        f"Selected pixel size: {pixel_width}×{pixel_height} pixels\n"
+                        f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                    )
         else:
             # If num_pixels is 0, default to treating selection as 1 pixel
-            self.scale_display.setText(f"{pixel_size:.2f}")
-        
-        # Update info label
-        if num_pixels > 1:
-            self.pixel_info_label.setText(
-                f"Selected area: {pixel_size}x{pixel_size} pixels\n"
-                f"Contains {num_pixels} pixels (scale: {float(pixel_size)/num_pixels:.2f})\n"
-                f"Grid offset: ({offset_x}, {offset_y}) pixels"
-            )
-        else:
-            self.pixel_info_label.setText(
-                f"Selected pixel size: {pixel_size}x{pixel_size} pixels\n"
-                f"Grid offset: ({offset_x}, {offset_y}) pixels"
-            )
+            self.scale_display.setText(f"{pixel_width:.2f}")
+            
+            # Update info label with original offsets
+            if abs(aspect_ratio - 1.0) > 0.01:  # If non-square
+                self.pixel_info_label.setText(
+                    f"Selected pixel size: {pixel_width}×{pixel_height} pixels (non-square, ratio: {aspect_ratio:.2f})\n"
+                    f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                )
+            else:
+                self.pixel_info_label.setText(
+                    f"Selected pixel size: {pixel_width}×{pixel_height} pixels\n"
+                    f"Grid offset: ({offset_x}, {offset_y}) pixels"
+                )
     
     def browseImage(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1123,6 +1366,7 @@ class PixelArtDownscalerApp(QMainWindow):
             self.drop_area.pan_offset_y = 0
             
             # Scale preview zoom to match visual size
+            # Use scale_to_use as the preview scale factor
             self.preview_viewer.zoom_factor = orig_zoom * scale_to_use
             self.preview_viewer.pan_offset_x = 0
             self.preview_viewer.pan_offset_y = 0
@@ -1150,11 +1394,18 @@ class PixelArtDownscalerApp(QMainWindow):
             self.status_bar.showMessage("Error loading image")
             QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
     
+    def toggleGridVisibility(self, visible):
+        """Toggle the visibility of the grid overlay in the selection rectangle"""
+        if hasattr(self, 'drop_area'):
+            self.drop_area.show_grid = visible
+            self.drop_area.update()  # Force redraw
+    
     def showTestPreview(self):
         """Show a test image in the preview to verify display works"""
         try:
             # Default to a scale of 2 for a clear test image
-            scale_to_use = 2.0
+            scale_x = scale_y = 2.0
+            scale_to_use = 2.0  # Keep for backward compatibility
             
             # Create a small original test image (for the input view)
             orig_size = 4
@@ -1206,6 +1457,10 @@ class PixelArtDownscalerApp(QMainWindow):
             # Update zoom label
             self.zoom_label.setText(f"Zoom: {orig_zoom:.2f}x")
             
+            # Set the scales in the class instance for other methods to use
+            self.scale_x = scale_x
+            self.scale_y = scale_y
+            
             # Update scale value in UI to match the test scale
             if hasattr(self, 'selection_size_input') and hasattr(self, 'num_pixels_input'):
                 self.selection_size_input.setValue(int(scale_to_use))
@@ -1214,7 +1469,7 @@ class PixelArtDownscalerApp(QMainWindow):
             self.status_bar.showMessage(f"Test pattern displayed. Scale: {scale_to_use}x (each preview pixel = {scale_to_use} input pixels)")
             
         except Exception as e:
-            print(f"Test preview error: {str(e)}")
+            # Test preview error occurred
             self.preview_viewer.setText(f"Error creating test preview: {str(e)}")
     
     def processLoadedImage(self):
@@ -1232,13 +1487,23 @@ class PixelArtDownscalerApp(QMainWindow):
             pil_img = Image.open(file_path)
             width, height = pil_img.size
             
-            # Get the selection size, number of pixels, and calculate scale
-            selection_size = self.selection_size_input.value()
+            # Get the selection size, number of pixels, and calculate scales
             num_pixels = self.num_pixels_input.value()
+            selection_size = self.selection_size_input.value()
             
-            # Calculate the scale (selection size / number of pixels)
-            # If num_pixels is 0, treat selection as 1 pixel (1:1 mapping)
-            scale_to_use = selection_size / max(1, num_pixels)
+            # Get separate scales for X and Y if available
+            if hasattr(self, 'scale_x') and hasattr(self, 'scale_y'):
+                scale_x = self.scale_x
+                scale_y = self.scale_y
+            else:
+                # Fall back to using selection_size if separate scales aren't set
+                scale_x = scale_y = selection_size / max(1, num_pixels)
+            
+            # For status updates
+            if abs(scale_x - scale_y) > 0.01:
+                scale_display = f"X:{scale_x:.2f}, Y:{scale_y:.2f}"
+            else:
+                scale_display = f"{scale_x:.2f}"
             
             offset_x = self.offset_x_input.value()
             offset_y = self.offset_y_input.value()
@@ -1263,62 +1528,107 @@ class PixelArtDownscalerApp(QMainWindow):
             # Show scale info in status bar
             if num_pixels > 1:
                 self.status_bar.showMessage(
-                    f"Using fractional scale: {scale_to_use:.2f} (selection size {selection_size} / {num_pixels} pixels)"
+                    f"Using scale: {scale_display} (selection size {selection_size} / {num_pixels} pixels)"
                     f" with offset ({offset_x}, {offset_y})"
                 )
             else:
                 self.status_bar.showMessage(
-                    f"Using pixel size: {scale_to_use:.2f}x with offset ({offset_x}, {offset_y})"
+                    f"Using pixel size: {scale_display} with offset ({offset_x}, {offset_y})"
                 )
             QApplication.processEvents()
             
-            print(f"DEBUG: Processing with scale: {scale_to_use:.2f}x, offset: ({offset_x}, {offset_y})")
             
             # Safety check - if not using median, make sure it's safe
             if not use_median:
                 # If color clustering is likely to fail (with very small scale), use simple mean instead
-                if scale_to_use <= 2:
+                if min(scale_x, scale_y) <= 2:
                     # For very small scales, force use_median to True as a safer alternative
                     use_median = True
-                    print("DEBUG: Small scale detected, using median for safety")
                     # Inform the user that we're using median instead
                     self.status_bar.showMessage("Using median color for small scale (safer for small scales)")
                     QApplication.processEvents()
+            
+            # When using advanced color processing (not median), add color threshold details to status message
+            if not use_median:
+                # Safety check - if color clustering might fail with very small scale
+                if min(scale_x, scale_y) <= 2:
+                    # For very small scales, force use_median to True as a safer alternative
+                    use_median = True
+                    # Inform the user that we're using simple processing instead
+                    self.status_bar.showMessage("Using simple color processing for small scale (safer for small scales)")
+                    QApplication.processEvents()
+                else:
+                    # Add details about the color threshold being used
+                    threshold_info = f" with color similarity threshold: {color_threshold}"
+                    self.status_bar.showMessage(self.status_bar.currentMessage() + threshold_info)
+                    QApplication.processEvents()
+            
+            # If we're using simple color processing, pass color_threshold of 0 to disable clustering
+            # Otherwise, use the selected threshold for advanced color processing
+            effective_threshold = 0 if use_median else color_threshold
+            
+            # Get aspect ratio if we have one stored
+            aspect_ratio = getattr(self, 'pixel_aspect_ratio', 1.0)
+            
+            # Get preserve aspect ratio setting
+            preserve_aspect_ratio = self.preserve_aspect_check.isChecked()
             
             # First crop the image if there's an offset
             if offset_x > 0 or offset_y > 0:
                 # Crop to align with the grid
                 pil_img = pil_img.crop((offset_x, offset_y, width, height))
-                print(f"Image cropped to align with pixel grid using offset ({offset_x}, {offset_y})")
+                # Image cropped to align with pixel grid
                 # Create a temporary path for the cropped image
                 temp_dir = os.path.dirname(file_path)
                 temp_file = os.path.join(temp_dir, f"temp_cropped_{os.path.basename(file_path)}")
                 pil_img.save(temp_file)
                 file_path = temp_file
             
-            downscaled_path, clean_path = self.downscaler.process_image(
-                file_path, 
-                force_scale=scale_to_use,
-                upscale_factor=None,  # Will be auto-calculated in the function
-                export_original_size=export_original_size,
-                color_threshold=color_threshold,
-                use_median=use_median,
-                ignore_outer_pixels=ignore_outer_pixels
-            )
+            # If we're using a temporary file for the cropped image, we've already applied the offset
+            # Otherwise, we need to pass the offset values to the process_image method
+            if offset_x > 0 or offset_y > 0:
+                downscaled_path, clean_path = self.downscaler.process_image(
+                    file_path,  # This will be the temp_file with offset already applied
+                    force_scale_x=scale_x,
+                    force_scale_y=scale_y,
+                    upscale_factor=None,  # Will be auto-calculated in the function
+                    export_original_size=export_original_size,
+                    color_threshold=effective_threshold,
+                    use_median=use_median,
+                    ignore_outer_pixels=ignore_outer_pixels,
+                    preserve_original_proportions=preserve_aspect_ratio  # Whether to keep original proportions during upscaling
+                )
+            else:
+                # No offset needed
+                downscaled_path, clean_path = self.downscaler.process_image(
+                    file_path,
+                    force_scale_x=scale_x,
+                    force_scale_y=scale_y,
+                    upscale_factor=None,  # Will be auto-calculated in the function
+                    export_original_size=export_original_size,
+                    color_threshold=effective_threshold,
+                    use_median=use_median,
+                    ignore_outer_pixels=ignore_outer_pixels,
+                    preserve_original_proportions=preserve_aspect_ratio  # Whether to keep original proportions during upscaling
+                )
             
             # Process additional custom upscale if requested
             if custom_upscale_factor and custom_upscale_factor > 1:
                 self.status_bar.showMessage(f"Creating {custom_upscale_factor}x upscaled version...")
                 QApplication.processEvents()
                 
+                # Important: Use the same file_path as the main processing to ensure
+                # consistent offset handling across both operations
                 custom_downscaled, custom_clean = self.downscaler.process_image(
-                    file_path,
-                    force_scale=scale_to_use,  # Use the same scale as main processing
+                    file_path,  # This will be the temp_file with offset applied if offset was present
+                    force_scale_x=scale_x,  # Use the same scales as main processing
+                    force_scale_y=scale_y,
                     upscale_factor=custom_upscale_factor,
                     export_original_size=False,
-                    color_threshold=color_threshold,
+                    color_threshold=effective_threshold,  # Use the same effective threshold as main processing
                     use_median=use_median,
-                    ignore_outer_pixels=ignore_outer_pixels
+                    ignore_outer_pixels=ignore_outer_pixels,
+                    preserve_original_proportions=preserve_aspect_ratio  # Whether to keep original proportions during upscaling
                 )
             
             # Create success message
@@ -1358,7 +1668,8 @@ class PixelArtDownscalerApp(QMainWindow):
                     # Update the status
                     self.status_bar.showMessage(f"Final clean version displayed in preview")
                 except Exception as view_err:
-                    print(f"Error displaying clean result: {str(view_err)}")
+                    # Failed to display clean result
+                    pass
             
             # Clean up temporary file if it was created
             if offset_x > 0 or offset_y > 0:

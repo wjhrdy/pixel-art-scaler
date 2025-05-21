@@ -43,45 +43,44 @@ class PixelArtDownscaler:
             autocorr_scale = self._detect_scale_with_autocorrelation(img_array)
             if autocorr_scale > 1:
                 scale_votes[autocorr_scale] = scale_votes.get(autocorr_scale, 0) + 3  # Weight: highest
-                print(f"Autocorrelation suggests scale: {autocorr_scale}")
         except Exception as e:
-            print(f"Autocorrelation failed: {str(e)}")
+            pass
         
         # Second method: Color quantization and clustering
         try:
             color_scale = self._detect_scale_with_color_clustering(img_array)
             if color_scale > 1:
                 scale_votes[color_scale] = scale_votes.get(color_scale, 0) + 2  # Weight: medium
-                print(f"Color clustering suggests scale: {color_scale}")
+                pass
         except Exception as e:
-            print(f"Color clustering failed: {str(e)}")
+            pass
             
         # Third method: FFT frequency analysis
         try:
             fft_scale = self._detect_scale_with_fft(img)
             if fft_scale > 1:
                 scale_votes[fft_scale] = scale_votes.get(fft_scale, 0) + 2  # Weight: medium
-                print(f"FFT analysis suggests scale: {fft_scale}")
+                pass
         except Exception as e:
-            print(f"FFT analysis failed: {str(e)}")
+            pass
         
         # Fourth method: Edge detection
         try:
             edge_scale = self._detect_scale_with_edges(img_array)
             if edge_scale > 1:
                 scale_votes[edge_scale] = scale_votes.get(edge_scale, 0) + 1  # Weight: low
-                print(f"Edge detection suggests scale: {edge_scale}")
+                pass
         except Exception as e:
-            print(f"Edge detection failed: {str(e)}")
+            pass
             
         # Fifth method: Uniform block analysis
         try:
             block_scale = self._detect_scale_with_blocks(img_array)
             if block_scale > 1:
                 scale_votes[block_scale] = scale_votes.get(block_scale, 0) + 1  # Weight: low
-                print(f"Block analysis suggests scale: {block_scale}")
+                pass
         except Exception as e:
-            print(f"Block analysis failed: {str(e)}")
+            pass
         
         # Find the scale with the highest vote count
         if scale_votes:
@@ -95,20 +94,20 @@ class PixelArtDownscaler:
             
             total_pixels = width * height
             if total_pixels <= 100:  # 10x10 or smaller
-                print("Very small image detected, defaulting to 10x scale")
+                pass
                 return 10
             elif total_pixels <= 400:  # 20x20 or smaller
-                print("Small image detected, defaulting to 8x scale")
+                pass
                 return 8
             elif total_pixels <= 1600:  # 40x40 or smaller
-                print("Medium-small image detected, defaulting to 6x scale")
+                pass
                 return 6
             else:
-                print("Medium image detected, defaulting to 4x scale")
+                pass
                 return 4
                     
         # Default to 4 if no pattern is found (common for pixel art)
-        print("No clear scale pattern found, using default 4x scale")
+        pass
         return 4
         
     def _detect_scale_with_autocorrelation(self, img_array):
@@ -595,27 +594,32 @@ class PixelArtDownscaler:
             return uniform_blocks / total_blocks
         return 0
     
-    def downscale_image(self, img, scale, color_threshold=15, use_median=False, ignore_outer_pixels=True):
+    def downscale_image(self, img, scale_x, scale_y=None, color_threshold=15, use_median=False, ignore_outer_pixels=True):
         """
-        Downscale the image by the given scale factor (can be fractional), grouping similar colors.
+        Downscale the image by the given scale factors (can be fractional), grouping similar colors.
         
         Parameters:
         - img: Input PIL image
-        - scale: Scale factor to reduce by (can be fractional, e.g., 4.5)
+        - scale_x: Horizontal scale factor to reduce by (can be fractional, e.g., 4.5)
+        - scale_y: Vertical scale factor (defaults to scale_x if not provided)
         - color_threshold: Maximum distance between colors to be considered the same group
         - use_median: If True, use median color instead of most frequent
         - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
                             If numeric (0-90), percentage of outer pixels to ignore from each side
         """
+        # If scale_y is not provided, use scale_x (for backward compatibility)
+        if scale_y is None:
+            scale_y = scale_x
+            
         # Convert image to RGBA to ensure alpha channel is preserved
         img = img.convert("RGBA")
         
         width, height = img.size
         
-        # Handle fractional scale factor
-        # The new dimensions are original dimensions divided by scale
-        new_width = int(width / scale)
-        new_height = int(height / scale)
+        # Handle fractional scale factors
+        # The new dimensions are original dimensions divided by respective scale factors
+        new_width = int(width / scale_x)
+        new_height = int(height / scale_y)
         
         # Create a new image for the result
         result = Image.new("RGBA", (new_width, new_height))
@@ -632,11 +636,11 @@ class PixelArtDownscaler:
         for y in range(new_height):
             for x in range(new_width):
                 # Calculate the exact boundaries of this pixel in the original image
-                # For fractional scales, we need to handle differently
-                x_start = int(x * scale)
-                y_start = int(y * scale)
-                x_end = int((x + 1) * scale)
-                y_end = int((y + 1) * scale)
+                # For fractional scales, we need to handle each dimension separately
+                x_start = int(x * scale_x)
+                y_start = int(y * scale_y)
+                x_end = int((x + 1) * scale_x)
+                y_end = int((y + 1) * scale_y)
                 
                 # Make sure we don't go out of bounds
                 x_end = min(x_end, width)
@@ -683,23 +687,45 @@ class PixelArtDownscaler:
                     # Determine how many pixels to ignore from each side
                     if isinstance(ignore_outer_pixels, (int, float)) and 0 <= ignore_outer_pixels <= 90:
                         # Calculate border size based on percentage (0-90%)
-                        border = max(1, int(min(block_width, block_height) * (ignore_outer_pixels / 100.0)))
-                        # Make sure we don't ignore too much (keep at least 2x2 inner block)
-                        border = min(border, (min(block_width, block_height) // 2) - 1)
-                        border = max(1, border)  # Ensure at least 1 pixel border
+                        border_width = max(1, int(block_width * (ignore_outer_pixels / 100.0)))
+                        border_height = max(1, int(block_height * (ignore_outer_pixels / 100.0)))
                         
-                        # Extract the inner block by removing the calculated border
-                        if block_width > border*2 and block_height > border*2:
-                            inner_block = block[border:-border, border:-border, :3]
+                        # Make sure we don't ignore too much (keep at least 2x2 inner block)
+                        border_width = min(border_width, (block_width // 2) - 1)
+                        border_height = min(border_height, (block_height // 2) - 1)
+                        
+                        border_width = max(1, border_width)  # Ensure at least 1 pixel border
+                        border_height = max(1, border_height)  # Ensure at least 1 pixel border
+                        
+                        # Handle odd dimensions to ensure symmetric cutting
+                        left_border = border_width // 2
+                        right_border = border_width - left_border
+                        top_border = border_height // 2
+                        bottom_border = border_height - top_border
+                        
+                        # Ensure we have valid borders
+                        if block_width > left_border + right_border and block_height > top_border + bottom_border:
+                            inner_block = block[top_border:block_height-bottom_border, left_border:block_width-right_border, :3]
                             colors = inner_block.reshape(-1, 3)
                         else:
-                            # If border would be too large, default to ignoring just 1 pixel
-                            inner_block = block[1:-1, 1:-1, :3]
+                            # If border would be too large, use symmetrically reduced border
+                            left_right = min(1, block_width // 4)
+                            top_bottom = min(1, block_height // 4)
+                            inner_block = block[top_bottom:block_height-top_bottom, left_right:block_width-left_right, :3]
                             colors = inner_block.reshape(-1, 3)
                     else:
-                        # Traditional behavior - just ignore 1 pixel from each side
-                        inner_block = block[1:-1, 1:-1, :3]
-                        colors = inner_block.reshape(-1, 3)
+                        # Handle traditional behavior with symmetric cutting
+                        # For even dimensions, this is straightforward
+                        # For odd dimensions, we need to ensure symmetry
+                        left_right = min(1, block_width // 4)
+                        top_bottom = min(1, block_height // 4)
+                        
+                        if block_width > 2*left_right and block_height > 2*top_bottom:
+                            inner_block = block[top_bottom:block_height-top_bottom, left_right:block_width-left_right, :3]
+                            colors = inner_block.reshape(-1, 3)
+                        else:
+                            # Block too small, use all pixels
+                            colors = block[:, :, :3].reshape(-1, 3)
                 else:
                     # Use all pixels if block is too small or ignoring outer pixels is disabled
                     colors = block[:, :, :3].reshape(-1, 3)
@@ -833,48 +859,182 @@ class PixelArtDownscaler:
             
         return output_path
     
-    def process_image(self, file_path, force_scale=None, upscale_factor=None, export_original_size=True, 
-                  color_threshold=15, use_median=False, ignore_outer_pixels=True):
+    def correct_aspect_ratio(self, img, aspect_ratio):
+        """
+        Rescale an image to correct its aspect ratio.
+        This is used for handling non-square pixels.
+        
+        Parameters:
+        - img: PIL Image to be rescaled
+        - aspect_ratio: width/height ratio to correct
+        
+        Returns:
+        - Corrected PIL Image
+        """
+        if abs(aspect_ratio - 1.0) < 0.01:  # If it's already close to square, no need to correct
+            return img
+            
+        # Get original dimensions
+        width, height = img.size
+        
+        # Calculate new dimensions based on aspect ratio
+        # If aspect_ratio > 1, the width should be larger than height (wider)
+        # If aspect_ratio < 1, the height should be larger than width (taller)
+        if aspect_ratio > 1:
+            # Image is wider than tall, need to stretch horizontally
+            new_width = int(width * aspect_ratio)
+            new_height = height
+        else:
+            # Image is taller than wide, need to stretch vertically
+            new_width = width
+            new_height = int(height / aspect_ratio)
+        
+        # Resize the image to correct aspect ratio
+        # Use BICUBIC for smoother resizing before we do the pixel processing
+        corrected_img = img.resize((new_width, new_height), Image.BICUBIC)
+        pass
+        
+        return corrected_img
+    
+    def normalize_pixel_dimensions(self, img, scale_x, scale_y, offset_x, offset_y):
+        """
+        Adjust the image so that pixels are square by resizing proportionally.
+        
+        Parameters:
+        - img: PIL Image to normalize
+        - scale_x: Horizontal scale factor
+        - scale_y: Vertical scale factor
+        - offset_x: Current X offset for the pixel grid
+        - offset_y: Current Y offset for the pixel grid
+        
+        Returns:
+        - Normalized image with square pixels
+        - Updated scale and offset values for the normalized image
+        """
+        # Calculate the ratio between horizontal and vertical scales
+        if abs(scale_x - scale_y) < 0.01:  # Scales are already equal (square pixels)
+            return img, scale_x, scale_y, offset_x, offset_y
+        
+        width, height = img.size
+        
+        # Determine the target scale (use the smaller scale for better downscaling)
+        target_scale = min(scale_x, scale_y)
+        
+        # Calculate how much to resize each dimension
+        if scale_x > scale_y:  # Horizontal scale is larger - squeeze width
+            # Calculate new dimensions (squeeze width to normalize)
+            new_width = int(width * scale_y / scale_x)
+            new_height = height
+            
+            # Recalculate offset for the squeezed dimension
+            new_offset_x = int(offset_x * scale_y / scale_x)
+            new_offset_y = offset_y
+            
+        else:  # Vertical scale is larger - squeeze height
+            # Calculate new dimensions (squeeze height to normalize)
+            new_width = width
+            new_height = int(height * scale_x / scale_y)
+            
+            # Recalculate offset for the squeezed dimension
+            new_offset_x = offset_x
+            new_offset_y = int(offset_y * scale_x / scale_y)
+            
+        
+        # Resize the image (BICUBIC for smooth results during normalization)
+        normalized_img = img.resize((new_width, new_height), Image.BICUBIC)
+        
+        # Return the normalized image, updated scale (now equal in both dimensions), and offsets
+        return normalized_img, target_scale, target_scale, new_offset_x, new_offset_y
+    
+    def crop_to_whole_pixels(self, img, scale_x, scale_y, offset_x, offset_y):
+        """
+        Crop the image to remove partial pixels at the edges.
+        
+        Parameters:
+        - img: PIL Image to crop
+        - scale_x: The horizontal pixel scale 
+        - scale_y: The vertical pixel scale
+        - offset_x: X offset for the pixel grid
+        - offset_y: Y offset for the pixel grid
+        
+        Returns:
+        - Cropped image containing only whole pixels
+        """
+        width, height = img.size
+        
+        # Calculate the position of the last whole pixel in each direction
+        # Use the respective scale for each dimension
+        right_edge = width - ((width - offset_x) % scale_x)
+        bottom_edge = height - ((height - offset_y) % scale_y)
+        
+        # Make sure we don't accidentally crop the entire image
+        if right_edge <= offset_x:
+            right_edge = width
+        if bottom_edge <= offset_y:
+            bottom_edge = height
+        
+        if offset_x > 0 or offset_y > 0 or right_edge < width or bottom_edge < height:
+            # Crop the image to align with whole pixels
+            cropped_img = img.crop((offset_x, offset_y, right_edge, bottom_edge))
+            return cropped_img
+        
+        # No cropping needed
+        return img
+    
+    def process_image(self, file_path, force_scale=None, force_scale_x=None, force_scale_y=None, upscale_factor=None, 
+                  export_original_size=True, color_threshold=15, use_median=False, ignore_outer_pixels=True, 
+                  offset_x=0, offset_y=0, preserve_original_proportions=True):
         """
         Process a single image file.
         
         Parameters:
         - file_path: Path to the image file
-        - force_scale: Force a specific scale factor instead of auto-detecting (can be fractional)
+        - force_scale: Force a specific scale factor for both axes (can be fractional)
+        - force_scale_x: Force a specific horizontal scale factor (overrides force_scale)
+        - force_scale_y: Force a specific vertical scale factor (overrides force_scale)
         - upscale_factor: Factor to upscale after downscaling (using nearest neighbor)
         - export_original_size: Whether to export an image matching original dimensions
         - color_threshold: Threshold for color similarity when clustering (0-255)
         - use_median: Use median color instead of color clustering
         - ignore_outer_pixels: If True, ignore 1 pixel from each side when determining color
                             If numeric (0-90), percentage of outer pixels to ignore from each side
-        """
-        """
-        Process a single image file.
-        
-        Parameters:
-        - file_path: Path to the image file
-        - force_scale: Force a specific scale factor instead of auto-detecting (can be fractional)
-        - upscale_factor: Factor to upscale after downscaling (using nearest neighbor)
-        - export_original_size: Whether to export an image matching original dimensions
-        - color_threshold: Threshold for color similarity when clustering (0-255)
-        - use_median: Use median color instead of color clustering
-        - ignore_outer_pixels: If True, ignore the outermost pixels when determining color
+        - offset_x: X offset for the pixel grid (default: 0)
+        - offset_y: Y offset for the pixel grid (default: 0)
+        - preserve_original_proportions: Whether to maintain original pixel proportions during upscaling
         """
         try:
             # Load the image
             img = Image.open(file_path)
             original_size = img.size
             
-            # Use manually specified scale (can be fractional)
-            pixel_scale = force_scale if force_scale else 1
-            print(f"Using pixel scale: {pixel_scale}")
+            # Determine the scale factors to use for each axis
+            if force_scale_x is not None and force_scale_y is not None:
+                # Use explicitly provided scales for each axis
+                scale_x = force_scale_x
+                scale_y = force_scale_y
+            elif force_scale is not None:
+                # Use the same scale for both axes
+                scale_x = scale_y = force_scale
+            else:
+                # Default to 1:1 if no scale is provided
+                scale_x = scale_y = 1
             
-            if pixel_scale <= 1:
-                print("No scaling needed. Image is already at 1:1 pixel ratio.")
+            if scale_x <= 1 and scale_y <= 1:
+                pass
                 return None, None
             
-            # Downscale the image to true 1:1 pixel ratio (removes compression artifacts)
-            downscaled_img = self.downscale_image(img, pixel_scale, color_threshold, use_median, ignore_outer_pixels)
+            # 2. Normalize pixel dimensions if needed (make pixels square by resizing)
+            if abs(scale_x - scale_y) > 0.01:
+                # Only normalize if we're not preserving the original proportions during upscaling
+                if not preserve_original_proportions:
+                    img, scale_x, scale_y, offset_x, offset_y = self.normalize_pixel_dimensions(
+                        img, scale_x, scale_y, offset_x, offset_y)
+            
+            # 3. Crop the image to remove excess partial pixels at the edges
+            img = self.crop_to_whole_pixels(img, scale_x, scale_y, offset_x, offset_y)
+            
+            # 4. Downscale the image to true 1:1 pixel ratio (removes compression artifacts)
+            downscaled_img = self.downscale_image(img, scale_x, scale_y, color_threshold, use_median, ignore_outer_pixels)
             
             # Add suffix based on settings used
             suffix = "downscaled"
@@ -883,9 +1043,13 @@ class PixelArtDownscaler:
             elif color_threshold != 15:  # Only add suffix if not using default
                 suffix += f"_t{color_threshold}"
             
-            # Add fractional indicator if scale is not an integer
-            if pixel_scale != int(pixel_scale):
-                suffix += f"_f{pixel_scale:.2f}".replace('.', '_')
+            # Add scale indicators for each axis
+            if abs(scale_x - scale_y) > 0.01:
+                # Non-square pixels, include both scales
+                suffix += f"_sx{scale_x:.2f}_sy{scale_y:.2f}".replace('.', '_')
+            elif scale_x != int(scale_x):
+                # Square pixels but fractional scale, just include one
+                suffix += f"_s{scale_x:.2f}".replace('.', '_')
             
             # Add indicator for outer pixel handling
             if ignore_outer_pixels:
@@ -901,18 +1065,21 @@ class PixelArtDownscaler:
             
             # Log the color processing method used
             if use_median:
-                print(f"Image successfully downscaled using median color and saved to: {downscaled_path}")
+                pass
             else:
-                print(f"Image successfully downscaled using color clustering (threshold={color_threshold}) and saved to: {downscaled_path}")
+                pass
             
-            # Additional info for fractional scales and pixel ignoring
-            if pixel_scale != int(pixel_scale):
-                print(f"Used fractional scale of {pixel_scale:.2f}")
+            # Additional info for scales and pixel ignoring
+            if abs(scale_x - scale_y) > 0.01:
+                pass
+            elif scale_x != int(scale_x):
+                pass
+            
             if ignore_outer_pixels:
                 if isinstance(ignore_outer_pixels, (int, float)) and ignore_outer_pixels > 0:
-                    print(f"Ignored outer {ignore_outer_pixels}% of pixels for color determination")
+                    pass
                 else:
-                    print("Ignored outermost pixels for color determination")
+                    pass
 
             # If no upscale factor is specified, but original size preservation is requested
             if upscale_factor is None and export_original_size:
@@ -921,60 +1088,136 @@ class PixelArtDownscaler:
                 down_width, down_height = downscaled_img.size
                 width_factor = orig_width / down_width
                 height_factor = orig_height / down_height
+                
                 # Use the average as the upscale factor (rounded to nearest integer)
                 # For very small images, ensure scale is at least 4x
                 if orig_width <= 32 or orig_height <= 32:
                     upscale_factor = max(round((width_factor + height_factor) / 2), 4)
                 else:
                     upscale_factor = round((width_factor + height_factor) / 2)
-                print(f"Auto-calculated upscale factor to match original size: {upscale_factor}x")
+                    
+                # Auto-calculated upscale factor to match original size
             
-            # Clean version upscaled with nearest neighbor for social media
+            # Clean version upscaled with nearest neighbor
             if upscale_factor and upscale_factor > 1:
-                # Upscale using nearest neighbor to keep pixel art look
-                clean_width = downscaled_img.width * upscale_factor
-                clean_height = downscaled_img.height * upscale_factor
+                # Determine how to upscale: we can either preserve non-square pixels or normalize them
+                if preserve_original_proportions and abs(scale_x - scale_y) > 0.01:
+                    # If preserving original proportions and scales are different, use different upscale factors
+                    upscale_x = upscale_factor
+                    upscale_y = upscale_factor
+                    
+                    # Calculate the difference in scales that needs to be re-applied during upscaling
+                    scale_ratio = scale_x / scale_y
+                    
+                    if scale_ratio > 1:
+                        # X scale larger, so make upscaled image wider
+                        upscale_x = upscale_factor * scale_ratio
+                        pass
+                    else:
+                        # Y scale larger, so make upscaled image taller
+                        upscale_y = upscale_factor / scale_ratio
+                        pass
+                    
+                    # Calculate dimensions
+                    clean_width = int(downscaled_img.width * upscale_x)
+                    clean_height = int(downscaled_img.height * upscale_y)
+                else:
+                    # Standard upscaling with square pixels (same factor for both dimensions)
+                    pass
+                    clean_width = int(downscaled_img.width * upscale_factor)
+                    clean_height = int(downscaled_img.height * upscale_factor)
                 
                 # Use nearest neighbor (NEAREST) for sharp pixel boundaries
                 clean_img = downscaled_img.resize((clean_width, clean_height), Image.NEAREST)
                 
                 # Save the clean upscaled version
-                clean_path = self.get_output_path(file_path, suffix=f"clean_{upscale_factor}x")
+                suffix = f"clean_{upscale_factor}x"
+                
+                # Add information about pixel proportions to the filename
+                if abs(scale_x - scale_y) > 0.01:
+                    if preserve_original_proportions:
+                        suffix += f"_original_proportions"
+                    else:
+                        suffix += f"_square_pixels"
+                    
+                clean_path = self.get_output_path(file_path, suffix=suffix)
                 clean_img.save(clean_path)
-                print(f"Clean upscaled version saved to: {clean_path}")
+                pass
                 
                 return downscaled_path, clean_path
             
             return downscaled_path, None
             
         except Exception as e:
-            print(f"Error processing image: {str(e)}")
+            pass
             return None, None
 
 def main():
     parser = argparse.ArgumentParser(description='Clean up pixel art for social media by downscaling to true 1:1 ratio then upscaling with nearest neighbor')
     parser.add_argument('image_path', help='Path to the image file to process')
-    parser.add_argument('--scale', type=float, help='Force a specific downscale factor instead of auto-detecting (can be fractional, e.g. 4.5)')
+    
+    # Scale options
+    parser.add_argument('--scale', type=float, help='Force a specific downscale factor for both axes (can be fractional, e.g. 4.5)')
+    parser.add_argument('--scale-x', type=float, help='Force a specific horizontal downscale factor (overrides --scale)')
+    parser.add_argument('--scale-y', type=float, help='Force a specific vertical downscale factor (overrides --scale)')
+    
+    # Fractional scale calculation options
     parser.add_argument('--pixels', type=int, help='Number of pixels selected (used with --selection to calculate fractional scale)')
     parser.add_argument('--selection', type=int, help='Size of selection in pixels (used with --pixels to calculate fractional scale)')
+    parser.add_argument('--pixels-x', type=int, help='Number of horizontal pixels selected')
+    parser.add_argument('--selection-x', type=int, help='Horizontal size of selection in pixels')
+    parser.add_argument('--pixels-y', type=int, help='Number of vertical pixels selected')
+    parser.add_argument('--selection-y', type=int, help='Vertical size of selection in pixels')
+    
+    # Upscaling options
     parser.add_argument('--upscale', type=int, help='Factor to upscale after downscaling (default: auto-calculated to match original size)')
     parser.add_argument('--no-upscale', action='store_true', help='Skip creating an upscaled version')
     parser.add_argument('--custom-upscale', type=int, help='Create additional upscaled version with this factor')
+    parser.add_argument('--square-pixels', action='store_true', help='Force square pixels in output, even if original has different proportions')
+    
+    # Color processing options
     parser.add_argument('--color-threshold', type=int, default=15, help='Color similarity threshold (0-255, default: 15). Higher values group more colors together')
     parser.add_argument('--use-median', action='store_true', help='Use median color instead of color clustering')
     parser.add_argument('--include-outer-pixels', action='store_true', help='Include outermost pixels when determining colors (by default they are ignored)')
     parser.add_argument('--ignore-outer-percent', type=float, help='Percentage of outer pixels to ignore (0-90)')
     
+    # Grid options
+    parser.add_argument('--offset-x', type=int, default=0, help='X offset for the pixel grid (default: 0)')
+    parser.add_argument('--offset-y', type=int, default=0, help='Y offset for the pixel grid (default: 0)')
+    
     args = parser.parse_args()
     
-    # Calculate fractional scale if pixels and selection are provided
+    # Calculate scales for each dimension
+    force_scale_x = None
+    force_scale_y = None
+    
+    # First check if explicit scales are provided
+    if args.scale_x is not None:
+        force_scale_x = args.scale_x
+    
+    if args.scale_y is not None:
+        force_scale_y = args.scale_y
+    
+    # If not, check if per-dimension calculation parameters are provided
+    if force_scale_x is None and args.pixels_x is not None and args.selection_x is not None and args.pixels_x > 0:
+        force_scale_x = args.selection_x / args.pixels_x
+        pass
+    
+    if force_scale_y is None and args.pixels_y is not None and args.selection_y is not None and args.pixels_y > 0:
+        force_scale_y = args.selection_y / args.pixels_y
+        pass
+    
+    # If no per-dimension scales, fall back to single-scale approach
     calculated_scale = None
     if args.pixels is not None and args.selection is not None and args.pixels > 0:
         calculated_scale = args.selection / args.pixels
-        print(f"Calculated fractional scale: {calculated_scale:.2f} (selection size {args.selection} / {args.pixels} pixels)")
+        pass
     
-    # Use calculated scale if provided, otherwise use scale argument
-    force_scale = calculated_scale if calculated_scale is not None else args.scale
+    # Determine which scales to use based on precedence
+    force_scale = None
+    if force_scale_x is None and force_scale_y is None:
+        # No per-axis scales, use single scale approach
+        force_scale = calculated_scale if calculated_scale is not None else args.scale
     
     # Handle ignore_outer_pixels parameter
     ignore_outer_pixels = True  # Default
@@ -990,24 +1233,34 @@ def main():
     downscaler.process_image(
         args.image_path, 
         force_scale=force_scale,
+        force_scale_x=force_scale_x,
+        force_scale_y=force_scale_y,
         upscale_factor=args.upscale,
         export_original_size=not args.no_upscale,
         color_threshold=args.color_threshold,
         use_median=args.use_median,
-        ignore_outer_pixels=ignore_outer_pixels
+        ignore_outer_pixels=ignore_outer_pixels,
+        offset_x=args.offset_x,
+        offset_y=args.offset_y,
+        preserve_original_proportions=not args.square_pixels
     )
     
     # Process additional custom upscale if requested
     if args.custom_upscale and args.custom_upscale > 1:
-        print(f"\nCreating additional {args.custom_upscale}x upscaled version:")
+        pass
         downscaled_path, _ = downscaler.process_image(
             args.image_path,
             force_scale=force_scale,
+            force_scale_x=force_scale_x,
+            force_scale_y=force_scale_y,
             upscale_factor=args.custom_upscale,
             export_original_size=False,
             color_threshold=args.color_threshold,
             use_median=args.use_median,
-            ignore_outer_pixels=ignore_outer_pixels
+            ignore_outer_pixels=ignore_outer_pixels,
+            offset_x=args.offset_x,
+            offset_y=args.offset_y,
+            preserve_original_proportions=not args.square_pixels
         )
 
 if __name__ == "__main__":
