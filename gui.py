@@ -191,6 +191,11 @@ class ImageViewer(QLabel):
             self.space_pressed = True
             # Change cursor to a hand when spacebar is pressed
             self.setCursor(Qt.OpenHandCursor)
+        elif event.key() == Qt.Key_Shift:
+            self.shift_pressed = True
+            # If we're currently dragging, update the selection to be square
+            if hasattr(self, 'dragging') and self.dragging:
+                self.update()
     
     def keyReleaseEvent(self, event):
         # Reset spacebar state
@@ -200,6 +205,11 @@ class ImageViewer(QLabel):
             self.setCursor(Qt.ArrowCursor)
             # Also reset panning state
             self.is_panning = False
+        elif event.key() == Qt.Key_Shift:
+            self.shift_pressed = False
+            # If we're currently dragging, update the selection to reflect non-square
+            if hasattr(self, 'dragging') and self.dragging:
+                self.update()
     
     def mousePressEvent(self, event):
         # Pan with spacebar+left-drag or right-drag
@@ -273,6 +283,7 @@ class DropArea(ImageViewer):
         self.pixel_height = 1
         self.offset_x = 0
         self.offset_y = 0
+        self.shift_pressed = False  # Track shift key state
         
         # Grid overlay properties
         self.show_grid = True  # Show grid by default
@@ -403,30 +414,39 @@ class DropArea(ImageViewer):
             image_x = max(0, min(self.pixmap.width() - 1, int((event.position().x() - x_offset) / self.zoom_factor)))
             image_y = max(0, min(self.pixmap.height() - 1, int((event.position().y() - y_offset) / self.zoom_factor)))
             
-            # Calculate width and height of selection
-            width = abs(image_x - self.selection_start.x()) + 1
-            height = abs(image_y - self.selection_start.y()) + 1
-            
             # Determine which direction we're dragging
             drag_right = image_x >= self.selection_start.x()
             drag_down = image_y >= self.selection_start.y()
             
-            # Calculate the end coordinates based on current mouse position
-            if drag_right:
-                end_x = image_x
-            else:
-                end_x = image_x
+            # Get original end coordinates
+            end_x = image_x
+            end_y = image_y
+            
+            # If shift is pressed, make selection square
+            if hasattr(self, 'shift_pressed') and self.shift_pressed:
+                # Calculate the distance from start point in both directions
+                dx = abs(end_x - self.selection_start.x())
+                dy = abs(end_y - self.selection_start.y())
                 
-            if drag_down:
-                end_y = image_y
-            else:
-                end_y = image_y
+                # Use the smaller of the two sizes to make a square
+                square_size = min(dx, dy)
+                
+                # Adjust end coordinates to create a square
+                if drag_right:
+                    end_x = self.selection_start.x() + square_size
+                else:
+                    end_x = self.selection_start.x() - square_size
+                
+                if drag_down:
+                    end_y = self.selection_start.y() + square_size
+                else:
+                    end_y = self.selection_start.y() - square_size
             
             # Ensure coordinates are within image bounds
             end_x = max(0, min(self.pixmap.width() - 1, end_x))
             end_y = max(0, min(self.pixmap.height() - 1, end_y))
             
-            # Create the square selection rectangle
+            # Create the selection rectangle
             self.selection_rect = QRect(
                 min(self.selection_start.x(), end_x),
                 min(self.selection_start.y(), end_y),
